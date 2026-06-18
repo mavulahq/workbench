@@ -1,20 +1,26 @@
 /*
- * getfluxo.io - Worker Kit Queue Store
+ * getfluxo.io - Worker Kit BullMQ Queue Store
  * Copyright (c) 2026 getfluxo.io
  * License: PROPRIETARY
  */
 
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleDestroy } from '@nestjs/common';
+import { Job, JobsOptions, Queue } from 'bullmq';
+import IORedis, { RedisOptions } from 'ioredis';
 import { CreateJobInput, QueueStats, WorkerJob } from '../types';
 import { createJobId } from '../utils/ids';
 import { getRuntimeConfig } from '../utils/runtime-config';
-import { SimpleRedisClient } from './simple-redis.client';
 
 @Injectable()
-export class JobStoreService {
+export class JobStoreService implements OnModuleDestroy {
   private readonly config = getRuntimeConfig();
-  private readonly redis = new SimpleRedisClient(this.config.redisUrl);
+  private readonly connection = createRedisConnection(this.config.redisUrl);
+  private readonly queues = new Map<string, Queue>();
   private readonly memory = new MemoryJobStore();
+
+  async onModuleDestroy(): Promise<void> {
+    await Promise.all([...this.queues.values()].map((queue) => queue.close()));
+  }
 
   async enqueue(input: CreateJobInput): Promise<WorkerJob> {
     const now = new Date().toISOString();
@@ -35,79 +41,107 @@ export class JobStoreService {
       return this.memory.enqueue(job);
     }
 
-    await this.redis.command('SET', this.jobKey(job.id), JSON.stringify(job));
-    await this.redis.command('SADD', this.jobsKey(), job.id);
-    await this.redis.command('LPUSH', this.pendingKey(job.queue), job.id);
+    const queue = this.queue(job.queue);
+    const options: JobsOptions = {
+      jobId: job.id,
+      attempts: job.max_attempts,
+      backoff: {
+        type: 'exponential',
+        delay: this.config.workerBackoffMs,
+      },
+      removeOnComplete: false,
+      removeOnFail: false,
+    };
+    await queue.add(job.type, job, options);
     return job;
   }
 
-  async claim(queue: string): Promise<WorkerJob | null> {
+  async schedule(input: CreateJobInput & { schedule_id: string; every_ms: number }): Promise<void> {
     if (this.usesMemory()) {
-      return this.memory.claim(queue);
+      return;
     }
 
-    const jobId = await this.redis.command('RPOPLPUSH', this.pendingKey(queue), this.processingKey(queue));
-    if (!jobId) {
+    const queueName = input.queue || 'platform';
+    const queue = this.queue(queueName);
+    await queue.add(
+      input.type,
+      {
+        id: input.schedule_id,
+        queue: queueName,
+        type: input.type,
+        tenant_id: input.tenant_id || 'system',
+        payload: input.payload || {},
+        status: 'QUEUED',
+        attempts: 0,
+        max_attempts: Number(input.max_attempts || 3),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      {
+        jobId: input.schedule_id,
+        attempts: Number(input.max_attempts || 3),
+        backoff: {
+          type: 'exponential',
+          delay: this.config.workerBackoffMs,
+        },
+        repeat: {
+          every: input.every_ms,
+        },
+        removeOnComplete: 100,
+        removeOnFail: false,
+      },
+    );
+  }
+
+  async claim(queue: string): Promise<WorkerJob | null> {
+    if (!this.usesMemory()) {
       return null;
     }
-
-    const job = await this.get(jobId);
-    if (!job) {
-      await this.redis.command('LREM', this.processingKey(queue), 0, jobId);
-      return null;
-    }
-
-    const updated: WorkerJob = {
-      ...job,
-      status: 'PROCESSING',
-      attempts: job.attempts + 1,
-      started_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    await this.save(updated);
-    return updated;
+    return this.memory.claim(queue);
   }
 
   async complete(job: WorkerJob, result: any): Promise<WorkerJob> {
-    const updated: WorkerJob = {
-      ...job,
-      status: 'COMPLETED',
-      result,
-      completed_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    if (this.usesMemory()) {
-      return this.memory.complete(updated);
+    if (!this.usesMemory()) {
+      return { ...job, status: 'COMPLETED', result, completed_at: new Date().toISOString() };
     }
-
-    await this.redis.command('LREM', this.processingKey(job.queue), 0, job.id);
-    await this.save(updated);
-    return updated;
+    return this.memory.complete({ ...job, status: 'COMPLETED', result, completed_at: new Date().toISOString() });
   }
 
   async fail(job: WorkerJob, error: Error): Promise<WorkerJob> {
+    if (!this.usesMemory()) {
+      return { ...job, status: 'FAILED', last_error: error.message, failed_at: new Date().toISOString() };
+    }
     const terminal = job.attempts >= job.max_attempts;
-    const updated: WorkerJob = {
+    return this.memory.fail({
       ...job,
       status: terminal ? 'FAILED' : 'QUEUED',
       last_error: error.message,
       failed_at: terminal ? new Date().toISOString() : undefined,
       updated_at: new Date().toISOString(),
-    };
+    });
+  }
 
+  async moveToDeadLetter(queueName: string, job: WorkerJob, error: Error): Promise<void> {
     if (this.usesMemory()) {
-      return this.memory.fail(updated);
+      return;
     }
 
-    await this.redis.command('LREM', this.processingKey(job.queue), 0, job.id);
-    await this.save(updated);
-    if (terminal) {
-      await this.redis.command('LPUSH', this.deadKey(job.queue), job.id);
-    } else {
-      await this.redis.command('LPUSH', this.pendingKey(job.queue), job.id);
-    }
-    return updated;
+    await this.queue(this.deadLetterQueueName(queueName)).add(
+      job.type,
+      {
+        ...job,
+        status: 'FAILED',
+        last_error: error.message,
+        failed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      {
+        jobId: `dead-letter-${job.id}`,
+        attempts: 1,
+        removeOnComplete: false,
+        removeOnFail: false,
+      },
+    );
   }
 
   async get(jobId: string): Promise<WorkerJob | null> {
@@ -115,32 +149,42 @@ export class JobStoreService {
       return this.memory.get(jobId);
     }
 
-    const raw = await this.redis.command('GET', this.jobKey(jobId));
-    return raw ? JSON.parse(raw) : null;
+    for (const queueName of this.config.queues) {
+      const bullJob = await this.queue(queueName).getJob(jobId);
+      if (bullJob) {
+        return this.fromBullJob(queueName, bullJob);
+      }
+    }
+    return null;
   }
 
-  async stats(queue: string): Promise<QueueStats> {
+  async stats(queueName: string): Promise<QueueStats> {
     if (this.usesMemory()) {
-      return this.memory.stats(queue);
+      return this.memory.stats(queueName);
     }
 
-    const [queued, processing, deadLetter] = await Promise.all([
-      this.redis.command('LLEN', this.pendingKey(queue)),
-      this.redis.command('LLEN', this.processingKey(queue)),
-      this.redis.command('LLEN', this.deadKey(queue)),
+    const [counts, deadLetterCounts] = await Promise.all([
+      this.queue(queueName).getJobCounts('waiting', 'active', 'delayed', 'failed', 'completed'),
+      this.queue(this.deadLetterQueueName(queueName)).getJobCounts('waiting', 'delayed', 'failed'),
     ]);
-    const ids = await this.redis.command('SMEMBERS', this.jobsKey());
-    const jobs = await Promise.all((ids || []).map((id: string) => this.get(id)));
-    const scoped = jobs.filter((job): job is WorkerJob => Boolean(job && job.queue === queue));
+    const queued = Number(counts.waiting || 0);
+    const processing = Number(counts.active || 0);
+    const delayed = Number(counts.delayed || 0);
+    const failed = Number(counts.failed || 0);
+    const completed = Number(counts.completed || 0);
 
     return {
-      queue,
+      queue: queueName,
       queued,
       processing,
-      dead_letter: deadLetter,
-      total: scoped.length,
-      completed: scoped.filter((job) => job.status === 'COMPLETED').length,
-      failed: scoped.filter((job) => job.status === 'FAILED').length,
+      delayed,
+      dead_letter:
+        Number(deadLetterCounts.waiting || 0) +
+        Number(deadLetterCounts.delayed || 0) +
+        Number(deadLetterCounts.failed || 0),
+      total: queued + processing + delayed + failed + completed,
+      completed,
+      failed,
     };
   }
 
@@ -149,35 +193,46 @@ export class JobStoreService {
       return true;
     }
 
-    return (await this.redis.ping()) === 'PONG';
+    const redis = new IORedis(this.connection);
+    try {
+      return (await redis.ping()) === 'PONG';
+    } finally {
+      redis.disconnect();
+    }
   }
 
-  private async save(job: WorkerJob): Promise<void> {
-    await this.redis.command('SET', this.jobKey(job.id), JSON.stringify(job));
+  getConnection(): RedisOptions {
+    return this.connection;
   }
 
-  private usesMemory(): boolean {
+  usesMemory(): boolean {
     return this.config.queueBackend === 'memory' || process.env.NODE_ENV === 'test';
   }
 
-  private jobKey(jobId: string): string {
-    return `fwk:jobs:${jobId}`;
+  private queue(name: string): Queue {
+    if (!this.queues.has(name)) {
+      this.queues.set(name, new Queue(name, { connection: this.connection }));
+    }
+    return this.queues.get(name)!;
   }
 
-  private jobsKey(): string {
-    return 'fwk:jobs:index';
+  private deadLetterQueueName(queueName: string): string {
+    return `${queueName}-dead-letter`;
   }
 
-  private pendingKey(queue: string): string {
-    return `fwk:queue:${queue}:pending`;
-  }
-
-  private processingKey(queue: string): string {
-    return `fwk:queue:${queue}:processing`;
-  }
-
-  private deadKey(queue: string): string {
-    return `fwk:queue:${queue}:dead`;
+  private async fromBullJob(queueName: string, job: Job): Promise<WorkerJob> {
+    const state = await job.getState();
+    const data = job.data as WorkerJob;
+    return {
+      ...data,
+      id: String(job.id || data.id),
+      queue: queueName,
+      status: mapBullState(state),
+      attempts: job.attemptsMade,
+      updated_at: new Date(job.timestamp || Date.now()).toISOString(),
+      result: job.returnvalue,
+      last_error: job.failedReason,
+    };
   }
 }
 
@@ -212,8 +267,8 @@ class MemoryJobStore {
 
   complete(job: WorkerJob): WorkerJob {
     this.remove(this.processing, job.queue, job.id);
-    this.jobs.set(job.id, job);
-    return job;
+    this.jobs.set(job.id, { ...job, updated_at: new Date().toISOString() });
+    return this.jobs.get(job.id)!;
   }
 
   fail(job: WorkerJob): WorkerJob {
@@ -237,6 +292,7 @@ class MemoryJobStore {
       queue,
       queued: this.list(this.pending, queue).length,
       processing: this.list(this.processing, queue).length,
+      delayed: 0,
       dead_letter: this.list(this.dead, queue).length,
       total: jobs.length,
       completed: jobs.filter((job) => job.status === 'COMPLETED').length,
@@ -257,5 +313,29 @@ class MemoryJobStore {
     if (index >= 0) {
       items.splice(index, 1);
     }
+  }
+}
+
+function createRedisConnection(redisUrl: string): RedisOptions {
+  const parsed = new URL(redisUrl);
+  return {
+    host: parsed.hostname || 'localhost',
+    port: Number(parsed.port || 6379),
+    password: parsed.password || undefined,
+    db: parsed.pathname ? Number(parsed.pathname.slice(1) || 0) : 0,
+    maxRetriesPerRequest: null,
+  };
+}
+
+function mapBullState(state: string): WorkerJob['status'] {
+  switch (state) {
+    case 'completed':
+      return 'COMPLETED';
+    case 'active':
+      return 'PROCESSING';
+    case 'failed':
+      return 'FAILED';
+    default:
+      return 'QUEUED';
   }
 }

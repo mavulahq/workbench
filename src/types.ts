@@ -46,6 +46,7 @@ export interface QueueStats {
   queue: string;
   queued: number;
   processing: number;
+  delayed: number;
   dead_letter: number;
   total: number;
   completed: number;
@@ -61,9 +62,28 @@ export interface DependencyStatus {
 export interface WorkerRuntimeStatus {
   enabled: boolean;
   running: boolean;
+  backend: string;
   queues: string[];
   processed: number;
   failed: number;
+  last_heartbeat?: string;
+  last_error?: string;
+}
+
+export interface ScheduledJobDefinition {
+  id: string;
+  queue: string;
+  type: JobType;
+  every_ms: number;
+  payload: Record<string, any>;
+}
+
+export interface WorkerHealthMetrics {
+  worker_enabled: boolean;
+  worker_running: boolean;
+  processed_total: number;
+  failed_total: number;
+  queues: QueueStats[];
   last_heartbeat?: string;
   last_error?: string;
 }

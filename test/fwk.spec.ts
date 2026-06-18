@@ -66,5 +66,12 @@ describe('fwk - worker runtime', () => {
     const status = await statusController.status();
     expect(status.service).toBe('fwk');
     expect(status.queues.some((queue: any) => queue.queue === 'payments')).toBe(true);
+    expect(status.schedules.some((schedule: any) => schedule.id === 'scheduled_reconciliation_hourly')).toBe(true);
+  });
+
+  it('exposes worker health metrics', async () => {
+    const metrics = await statusController.metrics();
+    expect(metrics.worker_enabled).toBe(false);
+    expect(metrics.queues.some((queue: any) => queue.queue === 'payments')).toBe(true);
   });
 });

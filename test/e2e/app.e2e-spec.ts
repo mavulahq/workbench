@@ -36,6 +36,13 @@ describe('fwk (e2e)', () => {
     expect(status.service).toBe('fwk');
     expect(status).toHaveProperty('dependencies');
     expect(status).toHaveProperty('worker');
+    expect(status).toHaveProperty('schedules');
     expect(status).toHaveProperty('queues');
+  });
+
+  it('/api/status/metrics (GET)', async () => {
+    const metrics = await statusController.metrics();
+    expect(metrics).toHaveProperty('worker_running');
+    expect(metrics).toHaveProperty('queues');
   });
 });

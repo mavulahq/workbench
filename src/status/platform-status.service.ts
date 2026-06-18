@@ -9,6 +9,8 @@ import { checkTcpUrl } from '../infra/tcp-health';
 import { JobStoreService } from '../queue/job-store.service';
 import { DependencyStatus, QueueStats } from '../types';
 import { getRuntimeConfig } from '../utils/runtime-config';
+import { SchedulerService } from '../worker/scheduler.service';
+import { WorkerMetricsService } from '../worker/worker-metrics.service';
 import { WorkerService } from '../worker/worker.service';
 
 @Injectable()
@@ -19,6 +21,8 @@ export class PlatformStatusService {
   constructor(
     private readonly store: JobStoreService,
     private readonly worker: WorkerService,
+    private readonly scheduler: SchedulerService,
+    private readonly metrics: WorkerMetricsService,
   ) {}
 
   async health() {
@@ -50,12 +54,25 @@ export class PlatformStatusService {
         redis,
       },
       worker,
+      schedules: this.scheduler.list(),
       queues,
     };
   }
 
   async queueStats(): Promise<QueueStats[]> {
     return Promise.all(this.config.queues.map((queue) => this.store.stats(queue)));
+  }
+
+  schedules() {
+    return this.scheduler.list();
+  }
+
+  workerMetrics() {
+    return this.metrics.snapshot();
+  }
+
+  prometheusMetrics() {
+    return this.metrics.prometheus();
   }
 
   private async redisStatus(): Promise<DependencyStatus> {

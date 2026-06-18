@@ -4,7 +4,7 @@
  * License: PROPRIETARY
  */
 
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Header } from '@nestjs/common';
 import { PlatformStatusService } from '../status/platform-status.service';
 
 @Controller()
@@ -24,5 +24,21 @@ export class StatusController {
   @Get('status/queues')
   queues() {
     return this.platformStatus.queueStats();
+  }
+
+  @Get('status/schedules')
+  schedules() {
+    return this.platformStatus.schedules();
+  }
+
+  @Get('status/metrics')
+  metrics() {
+    return this.platformStatus.workerMetrics();
+  }
+
+  @Get('metrics')
+  @Header('Content-Type', 'text/plain; version=0.0.4')
+  prometheusMetrics() {
+    return this.platformStatus.prometheusMetrics();
   }
 }
