@@ -34,13 +34,14 @@ export class PlatformStatusService {
   }
 
   async status() {
-    const [postgres, redis, queues] = await Promise.all([
+    const [postgres, redis, fengine, queues] = await Promise.all([
       checkTcpUrl(this.config.databaseUrl, 5432),
       this.redisStatus(),
+      this.fengineStatus(),
       this.queueStats(),
     ]);
     const worker = this.worker.status();
-    const status = this.overallStatus(postgres, redis, worker.running || !worker.enabled);
+    const status = this.overallStatus(postgres, redis, fengine, worker.running || !worker.enabled);
 
     return {
       status,
@@ -52,6 +53,7 @@ export class PlatformStatusService {
       dependencies: {
         postgres,
         redis,
+        fengine,
       },
       worker,
       schedules: this.scheduler.list(),
@@ -93,11 +95,40 @@ export class PlatformStatusService {
     }
   }
 
-  private overallStatus(postgres: DependencyStatus, redis: DependencyStatus, workerReady: boolean): 'ok' | 'degraded' | 'down' {
-    if (postgres.status === 'down' || redis.status === 'down') {
+  private async fengineStatus(): Promise<DependencyStatus> {
+    if (!this.config.fengineStatusEnabled) {
+      return { status: 'degraded', message: 'fengine status check disabled' };
+    }
+
+    const started = Date.now();
+    try {
+      const response = await fetch(`${this.config.fengineUrl}/api/health`, {
+        signal: AbortSignal.timeout(Math.min(this.config.internalRequestTimeoutMs, 3000)),
+      });
+      return {
+        status: response.ok ? 'ok' : 'down',
+        latency_ms: Date.now() - started,
+        message: response.ok ? undefined : `HTTP ${response.status}`,
+      };
+    } catch (error: any) {
+      return {
+        status: 'down',
+        latency_ms: Date.now() - started,
+        message: error?.message || 'fengine unavailable',
+      };
+    }
+  }
+
+  private overallStatus(
+    postgres: DependencyStatus,
+    redis: DependencyStatus,
+    fengine: DependencyStatus,
+    workerReady: boolean,
+  ): 'ok' | 'degraded' | 'down' {
+    if (postgres.status === 'down' || redis.status === 'down' || fengine.status === 'down') {
       return 'down';
     }
-    if (!workerReady || postgres.status === 'degraded' || redis.status === 'degraded') {
+    if (!workerReady || postgres.status === 'degraded' || redis.status === 'degraded' || fengine.status === 'degraded') {
       return 'degraded';
     }
     return 'ok';

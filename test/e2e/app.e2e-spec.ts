@@ -10,6 +10,8 @@ describe('fwk (e2e)', () => {
   beforeAll(async () => {
     process.env.FWK_QUEUE_BACKEND = 'memory';
     process.env.FWK_WORKER_ENABLED = 'false';
+    process.env.INTERNAL_API_KEY = 'test-internal-key';
+    process.env.FENGINE_STATUS_ENABLED = 'false';
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -25,6 +27,8 @@ describe('fwk (e2e)', () => {
     await app.close();
     delete process.env.FWK_QUEUE_BACKEND;
     delete process.env.FWK_WORKER_ENABLED;
+    delete process.env.INTERNAL_API_KEY;
+    delete process.env.FENGINE_STATUS_ENABLED;
   });
 
   it('/api/health (GET)', async () => {

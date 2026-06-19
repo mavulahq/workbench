@@ -14,6 +14,9 @@ describe('fwk - worker runtime', () => {
     process.env.FWK_QUEUE_BACKEND = 'memory';
     process.env.FWK_WORKER_ENABLED = 'false';
     process.env.FWK_QUEUES = 'payments,platform';
+    process.env.FENGINE_URL = 'http://fengine.test';
+    process.env.INTERNAL_API_KEY = 'test-internal-key';
+    process.env.FENGINE_STATUS_ENABLED = 'false';
 
     moduleFixture = await Test.createTestingModule({
       imports: [AppModule],
@@ -30,6 +33,9 @@ describe('fwk - worker runtime', () => {
     delete process.env.FWK_QUEUE_BACKEND;
     delete process.env.FWK_WORKER_ENABLED;
     delete process.env.FWK_QUEUES;
+    delete process.env.FENGINE_URL;
+    delete process.env.INTERNAL_API_KEY;
+    delete process.env.FENGINE_STATUS_ENABLED;
   });
 
   it('returns a public health payload', async () => {
@@ -60,6 +66,34 @@ describe('fwk - worker runtime', () => {
         payload: {},
       }),
     ).toThrow('Unsupported job type');
+  });
+
+  it('dispatches fengine events through the authenticated callback', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ accepted: true, executed_workflows: 1 }),
+    } as any);
+    const job = await jobsController.create({
+      queue: 'platform',
+      type: 'FENGINE_EVENT',
+      tenant_id: 'test_inst_001',
+      payload: { event_type: 'LOAN_APPROVED', loan_id: 'loan_001' },
+    });
+
+    expect(await worker.processOnce()).toBe(1);
+    await expect(jobsController.get(job.id)).resolves.toMatchObject({
+      status: 'COMPLETED',
+      result: { accepted: true, executed_workflows: 1 },
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://fengine.test/api/internal/worker/events',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ 'x-internal-api-key': 'test-internal-key' }),
+      }),
+    );
+    fetchMock.mockRestore();
   });
 
   it('exposes queue stats in platform status', async () => {

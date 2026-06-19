@@ -6,9 +6,12 @@
 
 import { Injectable } from '@nestjs/common';
 import { WorkerJob } from '../types';
+import { getRuntimeConfig } from '../utils/runtime-config';
 
 @Injectable()
 export class JobHandlersService {
+  private readonly config = getRuntimeConfig();
+
   async handle(job: WorkerJob): Promise<any> {
     switch (job.type) {
       case 'PLATFORM_HEALTH_CHECK':
@@ -42,10 +45,28 @@ export class JobHandlersService {
   }
 
   private async fengineEvent(job: WorkerJob) {
-    return {
-      accepted: true,
-      event_type: job.payload.event_type || 'UNKNOWN',
-      processed_at: new Date().toISOString(),
-    };
+    if (!this.config.internalApiKey) {
+      throw new Error('INTERNAL_API_KEY is required to dispatch fengine events');
+    }
+
+    const response = await fetch(`${this.config.fengineUrl}/api/internal/worker/events`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-internal-api-key': this.config.internalApiKey,
+      },
+      body: JSON.stringify({
+        job_id: job.id,
+        tenant_id: job.tenant_id,
+        event_type: job.payload.event_type || 'UNKNOWN',
+        payload: job.payload,
+      }),
+      signal: AbortSignal.timeout(this.config.internalRequestTimeoutMs),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(`fengine callback failed (${response.status}): ${JSON.stringify(body)}`);
+    }
+    return body;
   }
 }

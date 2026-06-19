@@ -93,6 +93,26 @@ export class JobStoreService implements OnModuleDestroy {
     );
   }
 
+  async removeSchedule(queueName: string, scheduleId: string): Promise<void> {
+    if (this.usesMemory()) {
+      return;
+    }
+
+    const queue = this.queue(queueName);
+    const [repeatableJobs, jobSchedulers] = await Promise.all([
+      queue.getRepeatableJobs(),
+      queue.getJobSchedulers(),
+    ]);
+    await Promise.all([
+      ...repeatableJobs
+        .filter((job) => job.id === scheduleId)
+        .map((job) => queue.removeRepeatableByKey(job.key)),
+      ...jobSchedulers
+        .filter((job) => job.id === scheduleId || (job.template?.data as WorkerJob)?.id === scheduleId)
+        .map((job) => queue.removeJobScheduler(job.key)),
+    ]);
+  }
+
   async claim(queue: string): Promise<WorkerJob | null> {
     if (!this.usesMemory()) {
       return null;
