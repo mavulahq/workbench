@@ -49,6 +49,10 @@ export class JobHandlersService {
       throw new Error('INTERNAL_API_KEY is required to dispatch fengine events');
     }
 
+    if (job.payload.domain_event === true && job.payload.event) {
+      return this.fengineDomainEvent(job);
+    }
+
     const response = await fetch(`${this.config.fengineUrl}/api/internal/worker/events`, {
       method: 'POST',
       headers: {
@@ -66,6 +70,26 @@ export class JobHandlersService {
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(`fengine callback failed (${response.status}): ${JSON.stringify(body)}`);
+    }
+    return body;
+  }
+
+  private async fengineDomainEvent(job: WorkerJob) {
+    const response = await fetch(`${this.config.fengineUrl}/api/internal/worker/domain-events`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-internal-api-key': this.config.internalApiKey,
+      },
+      body: JSON.stringify({
+        job_id: job.id,
+        event: job.payload.event,
+      }),
+      signal: AbortSignal.timeout(this.config.internalRequestTimeoutMs),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(`fengine domain event callback failed (${response.status}): ${JSON.stringify(body)}`);
     }
     return body;
   }
