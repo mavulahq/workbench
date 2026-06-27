@@ -255,6 +255,61 @@ describe('fwk - worker runtime', () => {
     fetchMock.mockRestore();
   });
 
+  it('dispatches explicitly flagged direct domain event envelopes', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        accepted: true,
+        event_id: 'evt_03d2a77a-90c7-4351-9d5e-1d53db8d1280',
+      }),
+    } as any);
+
+    const event = {
+      domain_event: true,
+      event_id: 'evt_03d2a77a-90c7-4351-9d5e-1d53db8d1280',
+      event_type: 'lending.payment_posted',
+      event_version: 1,
+      occurred_at: '2026-06-27T10:00:00.000Z',
+      tenant_id: 'test_inst_001',
+      aggregate: { type: 'loan', id: 'loan_001', version: 3 },
+      correlation_id: 'corr_payment_002',
+      causation_id: 'cmd_payment_002',
+      payload: {
+        transaction_id: 'txn_payment_002',
+        source_account_id: 'CUST_cust_001',
+        money: { amount: '1000.00', currency: 'MZN' },
+        allocation: { principal: '375.00', interest: '625.00', fees: '0.00' },
+        balance_after: '23250.00',
+      },
+      metadata: {
+        producer: 'fengine',
+        data_classification: 'restricted',
+      },
+    };
+
+    const job = await jobsController.create({
+      queue: 'platform',
+      type: 'FENGINE_EVENT',
+      tenant_id: 'test_inst_001',
+      payload: event,
+    });
+
+    expect(await worker.processOnce()).toBe(1);
+    await expect(jobsController.get(job.id)).resolves.toMatchObject({
+      status: 'COMPLETED',
+      result: { accepted: true, event_id: event.event_id },
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://fengine.test/api/internal/worker/domain-events',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining(event.event_id),
+      }),
+    );
+    fetchMock.mockRestore();
+  });
+
   it('exposes queue stats in platform status', async () => {
     const status = await statusController.status();
     expect(status.service).toBe('fwk');
