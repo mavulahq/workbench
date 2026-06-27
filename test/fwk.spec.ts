@@ -128,7 +128,7 @@ describe('fwk - worker runtime', () => {
       metadata: {
         producer: 'fengine',
         data_classification: 'restricted',
-        schema_uri: 'contracts/domain-events/payloads/lending.loan_disbursed.v1.schema.json',
+        schema_uri: 'contracts/domain-events/event-envelope.schema.json',
       },
     };
 
@@ -137,6 +137,64 @@ describe('fwk - worker runtime', () => {
       type: 'FENGINE_EVENT',
       tenant_id: 'test_inst_001',
       payload: { domain_event: true, event, event_type: event.event_type },
+    });
+
+    expect(await worker.processOnce()).toBe(1);
+    await expect(jobsController.get(job.id)).resolves.toMatchObject({
+      status: 'COMPLETED',
+      result: { accepted: true, event_id: event.event_id },
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://fengine.test/api/internal/worker/domain-events',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining(event.event_id),
+        headers: expect.objectContaining({
+          'x-internal-api-key': 'test-internal-key',
+        }),
+      }),
+    );
+    fetchMock.mockRestore();
+  });
+
+  it('dispatches direct canonical domain event envelopes through the domain callback', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        accepted: true,
+        event_id: 'evt_8d2f5a72-3fc6-45a5-8ef8-5df4af5e2e3a',
+      }),
+    } as any);
+    const event = {
+      event_id: 'evt_8d2f5a72-3fc6-45a5-8ef8-5df4af5e2e3a',
+      event_type: 'lending.payment_posted',
+      event_version: 1,
+      occurred_at: '2026-06-27T10:00:00.000Z',
+      tenant_id: 'test_inst_001',
+      aggregate: { type: 'loan', id: 'loan_001', version: 2 },
+      correlation_id: 'corr_payment_001',
+      causation_id: 'cmd_payment_001',
+      idempotency_key: 'idem_payment_001',
+      payload: {
+        transaction_id: 'txn_payment_001',
+        source_account_id: 'CUST_cust_001',
+        money: { amount: '2500.00', currency: 'MZN' },
+        allocation: { principal: '1375.00', interest: '625.00', fees: '500.00' },
+        balance_after: '23625.00',
+      },
+      metadata: {
+        producer: 'fengine',
+        data_classification: 'restricted',
+        schema_uri: 'contracts/domain-events/event-envelope.schema.json',
+      },
+    };
+
+    const job = await jobsController.create({
+      queue: 'platform',
+      type: 'FENGINE_EVENT',
+      tenant_id: 'test_inst_001',
+      payload: event,
     });
 
     expect(await worker.processOnce()).toBe(1);
