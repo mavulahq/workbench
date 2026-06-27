@@ -76,7 +76,10 @@ export class JobHandlersService {
   }
 
   private extractDomainEvent(payload: Record<string, any>): Record<string, any> | undefined {
-    if (payload.domain_event === true && this.isCanonicalDomainEvent(payload.event)) {
+    if (payload.domain_event === true) {
+      if (!payload.event || typeof payload.event !== 'object') {
+        throw new Error('domain_event payload must include an event object');
+      }
       return payload.event;
     }
     if (this.isCanonicalDomainEvent(payload)) {

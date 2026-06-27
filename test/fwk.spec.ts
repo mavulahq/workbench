@@ -215,6 +215,46 @@ describe('fwk - worker runtime', () => {
     fetchMock.mockRestore();
   });
 
+  it('keeps explicitly flagged domain events on the domain callback path', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ accepted: true, event_id: 'evt_partial' }),
+    } as any);
+
+    const job = await jobsController.create({
+      queue: 'platform',
+      type: 'FENGINE_EVENT',
+      tenant_id: 'test_inst_001',
+      payload: {
+        domain_event: true,
+        event_type: 'lending.payment_posted',
+        event: {
+          event_id: 'evt_partial',
+          event_type: 'lending.payment_posted',
+        },
+      },
+    });
+
+    expect(await worker.processOnce()).toBe(1);
+    await expect(jobsController.get(job.id)).resolves.toMatchObject({
+      status: 'COMPLETED',
+      result: { accepted: true, event_id: 'evt_partial' },
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://fengine.test/api/internal/worker/domain-events',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('evt_partial'),
+      }),
+    );
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      'http://fengine.test/api/internal/worker/events',
+      expect.anything(),
+    );
+    fetchMock.mockRestore();
+  });
+
   it('exposes queue stats in platform status', async () => {
     const status = await statusController.status();
     expect(status.service).toBe('fwk');
