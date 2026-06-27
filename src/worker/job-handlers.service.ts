@@ -49,8 +49,9 @@ export class JobHandlersService {
       throw new Error('INTERNAL_API_KEY is required to dispatch fengine events');
     }
 
-    if (job.payload.domain_event === true && job.payload.event) {
-      return this.fengineDomainEvent(job);
+    const domainEvent = this.extractDomainEvent(job.payload);
+    if (domainEvent) {
+      return this.fengineDomainEvent(job, domainEvent);
     }
 
     const response = await fetch(`${this.config.fengineUrl}/api/internal/worker/events`, {
@@ -74,7 +75,31 @@ export class JobHandlersService {
     return body;
   }
 
-  private async fengineDomainEvent(job: WorkerJob) {
+  private extractDomainEvent(payload: Record<string, any>): Record<string, any> | undefined {
+    if (payload.domain_event === true && this.isCanonicalDomainEvent(payload.event)) {
+      return payload.event;
+    }
+    if (this.isCanonicalDomainEvent(payload)) {
+      return payload;
+    }
+    return undefined;
+  }
+
+  private isCanonicalDomainEvent(value: any): value is Record<string, any> {
+    return Boolean(
+      value
+        && typeof value === 'object'
+        && typeof value.event_id === 'string'
+        && typeof value.event_type === 'string'
+        && typeof value.tenant_id === 'string'
+        && typeof value.event_version === 'number'
+        && value.aggregate
+        && value.payload
+        && value.metadata,
+    );
+  }
+
+  private async fengineDomainEvent(job: WorkerJob, event: Record<string, any>) {
     const response = await fetch(`${this.config.fengineUrl}/api/internal/worker/domain-events`, {
       method: 'POST',
       headers: {
@@ -83,7 +108,7 @@ export class JobHandlersService {
       },
       body: JSON.stringify({
         job_id: job.id,
-        event: job.payload.event,
+        event,
       }),
       signal: AbortSignal.timeout(this.config.internalRequestTimeoutMs),
     });
