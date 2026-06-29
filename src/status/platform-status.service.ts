@@ -105,11 +105,45 @@ export class PlatformStatusService {
       const response = await fetch(`${this.config.fengineUrl}/api/health`, {
         signal: AbortSignal.timeout(Math.min(this.config.internalRequestTimeoutMs, 3000)),
       });
-      return {
-        status: response.ok ? 'ok' : 'down',
-        latency_ms: Date.now() - started,
-        message: response.ok ? undefined : `HTTP ${response.status}`,
-      };
+      if (!response.ok) {
+        return {
+          status: 'down',
+          latency_ms: Date.now() - started,
+          message: `HTTP ${response.status}`,
+        };
+      }
+
+      if (!this.config.fengineProjectionStatusEnabled) {
+        return {
+          status: 'ok',
+          latency_ms: Date.now() - started,
+        };
+      }
+
+      try {
+        const projectionResponse = await fetch(`${this.config.fengineUrl}/api/projections/status`, {
+          signal: AbortSignal.timeout(Math.min(this.config.internalRequestTimeoutMs, 3000)),
+        });
+        if (!projectionResponse.ok) {
+          return {
+            status: 'degraded',
+            latency_ms: Date.now() - started,
+            message: `projection status unavailable: HTTP ${projectionResponse.status}`,
+          };
+        }
+        const projections = await projectionResponse.json().catch(() => ({}));
+        return {
+          status: 'ok',
+          latency_ms: Date.now() - started,
+          details: { projections },
+        };
+      } catch (error: any) {
+        return {
+          status: 'degraded',
+          latency_ms: Date.now() - started,
+          message: `projection status unavailable: ${error?.message || 'request failed'}`,
+        };
+      }
     } catch (error: any) {
       return {
         status: 'down',
