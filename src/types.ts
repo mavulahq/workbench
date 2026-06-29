@@ -57,6 +57,7 @@ export interface DependencyStatus {
   status: 'ok' | 'degraded' | 'down';
   latency_ms?: number;
   message?: string;
+  details?: Record<string, any>;
 }
 
 export interface WorkerRuntimeStatus {

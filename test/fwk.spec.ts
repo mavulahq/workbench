@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AppModule } from '../src/app.module';
 import { JobsController } from '../src/controllers/jobs.controller';
 import { StatusController } from '../src/controllers/status.controller';
+import { PlatformStatusService } from '../src/status/platform-status.service';
 import { WorkerService } from '../src/worker/worker.service';
 
 describe('fwk - worker runtime', () => {
@@ -36,6 +37,7 @@ describe('fwk - worker runtime', () => {
     delete process.env.FENGINE_URL;
     delete process.env.INTERNAL_API_KEY;
     delete process.env.FENGINE_STATUS_ENABLED;
+    delete process.env.FENGINE_PROJECTION_STATUS_ENABLED;
   });
 
   it('returns a public health payload', async () => {
@@ -322,4 +324,53 @@ describe('fwk - worker runtime', () => {
     expect(metrics.worker_enabled).toBe(false);
     expect(metrics.queues.some((queue: any) => queue.queue === 'payments')).toBe(true);
   });
+
+  it('includes fengine projection status when available', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ status: 'ok' }) } as any)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          status: 'ok',
+          projections: [{ projection_name: 'loan_activity', event_count: 2 }],
+        }),
+      } as any);
+    const service = platformStatusService();
+
+    await expect((service as any).fengineStatus()).resolves.toMatchObject({
+      status: 'ok',
+      details: {
+        projections: {
+          status: 'ok',
+          projections: [{ projection_name: 'loan_activity', event_count: 2 }],
+        },
+      },
+    });
+    fetchMock.mockRestore();
+  });
+
+  it('marks fengine degraded when projection status is unavailable', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ status: 'ok' }) } as any)
+      .mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) } as any);
+    const service = platformStatusService();
+
+    await expect((service as any).fengineStatus()).resolves.toMatchObject({
+      status: 'degraded',
+      message: 'projection status unavailable: HTTP 503',
+    });
+    fetchMock.mockRestore();
+  });
 });
+
+function platformStatusService(): PlatformStatusService {
+  process.env.FENGINE_STATUS_ENABLED = 'true';
+  process.env.FENGINE_PROJECTION_STATUS_ENABLED = 'true';
+  return new PlatformStatusService(
+    { ping: jest.fn(), stats: jest.fn() } as any,
+    { status: jest.fn() } as any,
+    { list: jest.fn() } as any,
+    { snapshot: jest.fn(), prometheus: jest.fn() } as any,
+  );
+}

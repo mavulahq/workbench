@@ -15,6 +15,7 @@ export function getRuntimeConfig() {
     internalApiKey: process.env.INTERNAL_API_KEY || '',
     internalRequestTimeoutMs: Number(process.env.INTERNAL_REQUEST_TIMEOUT_MS || 10000),
     fengineStatusEnabled: process.env.FENGINE_STATUS_ENABLED !== 'false',
+    fengineProjectionStatusEnabled: process.env.FENGINE_PROJECTION_STATUS_ENABLED !== 'false',
     queueBackend: process.env.FWK_QUEUE_BACKEND || 'redis',
     workerEnabled: process.env.FWK_WORKER_ENABLED !== 'false',
     schedulerEnabled: process.env.FWK_SCHEDULER_ENABLED !== 'false',
