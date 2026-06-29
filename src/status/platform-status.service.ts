@@ -101,9 +101,10 @@ export class PlatformStatusService {
     }
 
     const started = Date.now();
+    const timeoutBudgetMs = Math.min(this.config.internalRequestTimeoutMs, 3000);
     try {
       const response = await fetch(`${this.config.fengineUrl}/api/health`, {
-        signal: AbortSignal.timeout(Math.min(this.config.internalRequestTimeoutMs, 3000)),
+        signal: AbortSignal.timeout(timeoutBudgetMs),
       });
       if (!response.ok) {
         return {
@@ -121,8 +122,16 @@ export class PlatformStatusService {
       }
 
       try {
+        const remainingMs = this.remainingTimeoutMs(started, timeoutBudgetMs);
+        if (remainingMs <= 0) {
+          return {
+            status: 'degraded',
+            latency_ms: Date.now() - started,
+            message: 'projection status unavailable: timeout budget exhausted',
+          };
+        }
         const projectionResponse = await fetch(`${this.config.fengineUrl}/api/projections/status`, {
-          signal: AbortSignal.timeout(Math.min(this.config.internalRequestTimeoutMs, 3000)),
+          signal: AbortSignal.timeout(remainingMs),
         });
         if (!projectionResponse.ok) {
           return {
@@ -131,10 +140,28 @@ export class PlatformStatusService {
             message: `projection status unavailable: HTTP ${projectionResponse.status}`,
           };
         }
-        const projections = await projectionResponse.json().catch(() => ({}));
+        let projections: any;
+        try {
+          projections = await projectionResponse.json();
+        } catch {
+          return {
+            status: 'degraded',
+            latency_ms: Date.now() - started,
+            message: 'projection status unavailable: invalid JSON',
+          };
+        }
+        if (!projections || !['ok', 'degraded', 'down'].includes(projections.status)) {
+          return {
+            status: 'degraded',
+            latency_ms: Date.now() - started,
+            message: 'projection status unavailable: invalid status',
+          };
+        }
+        const status = projections.status === 'ok' ? 'ok' : projections.status;
         return {
-          status: 'ok',
+          status,
           latency_ms: Date.now() - started,
+          message: status === 'ok' ? undefined : `projection status ${status}`,
           details: { projections },
         };
       } catch (error: any) {
@@ -151,6 +178,10 @@ export class PlatformStatusService {
         message: error?.message || 'fengine unavailable',
       };
     }
+  }
+
+  private remainingTimeoutMs(started: number, timeoutBudgetMs: number): number {
+    return Math.max(0, timeoutBudgetMs - (Date.now() - started));
   }
 
   private overallStatus(

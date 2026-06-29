@@ -362,6 +362,63 @@ describe('fwk - worker runtime', () => {
     });
     fetchMock.mockRestore();
   });
+
+  it('marks fengine degraded when projection status JSON is invalid', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ status: 'ok' }) } as any)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => {
+          throw new Error('invalid JSON');
+        },
+      } as any);
+    const service = platformStatusService();
+
+    await expect((service as any).fengineStatus()).resolves.toMatchObject({
+      status: 'degraded',
+      message: 'projection status unavailable: invalid JSON',
+    });
+    fetchMock.mockRestore();
+  });
+
+  it('propagates unhealthy projection status payloads', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ status: 'ok' }) } as any)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ status: 'down', projections: [] }),
+      } as any);
+    const service = platformStatusService();
+
+    await expect((service as any).fengineStatus()).resolves.toMatchObject({
+      status: 'down',
+      message: 'projection status down',
+      details: { projections: { status: 'down', projections: [] } },
+    });
+    fetchMock.mockRestore();
+  });
+
+  it('caps projection status requests to the remaining fengine timeout budget', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ status: 'ok' }) } as any)
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ status: 'ok' }) } as any);
+    const timeoutMock = jest.spyOn(AbortSignal, 'timeout').mockReturnValue({} as any);
+    const nowMock = jest.spyOn(Date, 'now')
+      .mockReturnValueOnce(1000)
+      .mockReturnValueOnce(2800)
+      .mockReturnValue(2800);
+    const service = platformStatusService();
+
+    await expect((service as any).fengineStatus()).resolves.toMatchObject({ status: 'ok' });
+    expect(timeoutMock).toHaveBeenNthCalledWith(1, 3000);
+    expect(timeoutMock).toHaveBeenNthCalledWith(2, 1200);
+
+    fetchMock.mockRestore();
+    timeoutMock.mockRestore();
+    nowMock.mockRestore();
+  });
 });
 
 function platformStatusService(): PlatformStatusService {
