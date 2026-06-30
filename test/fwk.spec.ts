@@ -18,6 +18,7 @@ describe('fwk - worker runtime', () => {
     process.env.FENGINE_URL = 'http://fengine.test';
     process.env.INTERNAL_API_KEY = 'test-internal-key';
     process.env.FENGINE_STATUS_ENABLED = 'false';
+    process.env.FWK_PAYMENT_PROCESS_STORE = 'memory';
 
     moduleFixture = await Test.createTestingModule({
       imports: [AppModule],
@@ -38,6 +39,7 @@ describe('fwk - worker runtime', () => {
     delete process.env.INTERNAL_API_KEY;
     delete process.env.FENGINE_STATUS_ENABLED;
     delete process.env.FENGINE_PROJECTION_STATUS_ENABLED;
+    delete process.env.FWK_PAYMENT_PROCESS_STORE;
   });
 
   it('returns a public health payload', async () => {
@@ -50,7 +52,7 @@ describe('fwk - worker runtime', () => {
       queue: 'payments',
       type: 'PAYMENT_CAPTURE',
       tenant_id: 'test_inst_001',
-      payload: { payment_reference: 'pay_test_001' },
+      payload: paymentPayload('idem_payment_job_001', 'provider_payment_job_001'),
     });
 
     expect(job.status).toBe('QUEUED');
@@ -60,7 +62,26 @@ describe('fwk - worker runtime', () => {
     expect(processed.status).toBe('COMPLETED');
     expect(processed.result).toMatchObject({
       accepted: true,
-      payment_reference: 'pay_test_001',
+      state: 'PROVIDER_PENDING',
+      type: 'PAYMENT_CAPTURE',
+    });
+  });
+
+  it('runs payment reconciliation jobs on the payments queue', async () => {
+    const job = await jobsController.create({
+      queue: 'payments',
+      type: 'PAYMENT_RECONCILIATION',
+      tenant_id: 'test_inst_001',
+      payload: { limit: 10 },
+    });
+
+    expect(await worker.processOnce()).toBe(1);
+    await expect(jobsController.get(job.id)).resolves.toMatchObject({
+      status: 'COMPLETED',
+      result: {
+        accepted: true,
+        type: 'PAYMENT_RECONCILIATION',
+      },
     });
   });
 
@@ -323,6 +344,13 @@ describe('fwk - worker runtime', () => {
     const metrics = await statusController.metrics();
     expect(metrics.worker_enabled).toBe(false);
     expect(metrics.queues.some((queue: any) => queue.queue === 'payments')).toBe(true);
+    expect(metrics.payment_processes).toMatchObject({
+      active: expect.any(Number),
+      failed: expect.any(Number),
+      expired: expect.any(Number),
+      compensation_required: expect.any(Number),
+      outbox_pending: expect.any(Number),
+    });
   });
 
   it('includes fengine projection status when available', async () => {
@@ -420,6 +448,26 @@ describe('fwk - worker runtime', () => {
     nowMock.mockRestore();
   });
 });
+
+function paymentPayload(idempotencyKey: string, providerReference: string) {
+  return {
+    idempotency_key: idempotencyKey,
+    correlation_id: `corr_${idempotencyKey}`,
+    rail: 'mpesa',
+    amount: {
+      currency: 'MZN',
+      valueMinor: 15000,
+    },
+    payer: {
+      accountRef: 'customer_001',
+      phoneNumber: '+258840000000',
+    },
+    payee: {
+      accountRef: 'merchant_001',
+    },
+    provider_reference: providerReference,
+  };
+}
 
 function platformStatusService(): PlatformStatusService {
   process.env.FENGINE_STATUS_ENABLED = 'true';
