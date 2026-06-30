@@ -7,6 +7,7 @@
 import { Injectable } from '@nestjs/common';
 import { JobStoreService } from '../queue/job-store.service';
 import { WorkerHealthMetrics } from '../types';
+import { PaymentProcessRuntimeService } from './payment-process-runtime.service';
 import { WorkerService } from './worker.service';
 
 @Injectable()
@@ -14,11 +15,15 @@ export class WorkerMetricsService {
   constructor(
     private readonly store: JobStoreService,
     private readonly worker: WorkerService,
+    private readonly paymentProcesses: PaymentProcessRuntimeService,
   ) {}
 
   async snapshot(): Promise<WorkerHealthMetrics> {
     const worker = this.worker.status();
-    const queues = await Promise.all(worker.queues.map((queue) => this.store.stats(queue)));
+    const [queues, paymentProcesses] = await Promise.all([
+      Promise.all(worker.queues.map((queue) => this.store.stats(queue))),
+      this.paymentProcesses.metrics(),
+    ]);
     return {
       worker_enabled: worker.enabled,
       worker_running: worker.running,
@@ -27,6 +32,13 @@ export class WorkerMetricsService {
       last_heartbeat: worker.last_heartbeat,
       last_error: worker.last_error,
       queues,
+      payment_processes: {
+        active: paymentProcesses.active,
+        failed: paymentProcesses.failed,
+        expired: paymentProcesses.expired,
+        compensation_required: paymentProcesses.compensationRequired,
+        outbox_pending: paymentProcesses.outboxPending,
+      },
     };
   }
 
@@ -42,6 +54,21 @@ export class WorkerMetricsService {
       '# HELP fwk_worker_failed_total Failed jobs.',
       '# TYPE fwk_worker_failed_total counter',
       `fwk_worker_failed_total ${metrics.failed_total}`,
+      '# HELP fwk_payment_process_active Active payment processes.',
+      '# TYPE fwk_payment_process_active gauge',
+      `fwk_payment_process_active ${metrics.payment_processes?.active ?? 0}`,
+      '# HELP fwk_payment_process_failed Failed payment processes.',
+      '# TYPE fwk_payment_process_failed gauge',
+      `fwk_payment_process_failed ${metrics.payment_processes?.failed ?? 0}`,
+      '# HELP fwk_payment_process_expired Expired payment processes.',
+      '# TYPE fwk_payment_process_expired gauge',
+      `fwk_payment_process_expired ${metrics.payment_processes?.expired ?? 0}`,
+      '# HELP fwk_payment_process_compensation_required Payment processes requiring compensation.',
+      '# TYPE fwk_payment_process_compensation_required gauge',
+      `fwk_payment_process_compensation_required ${metrics.payment_processes?.compensation_required ?? 0}`,
+      '# HELP fwk_payment_outbox_pending Pending payment outbox events.',
+      '# TYPE fwk_payment_outbox_pending gauge',
+      `fwk_payment_outbox_pending ${metrics.payment_processes?.outbox_pending ?? 0}`,
     ];
 
     for (const queue of metrics.queues) {

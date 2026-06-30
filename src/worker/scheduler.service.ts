@@ -29,10 +29,10 @@ export class SchedulerService implements OnModuleInit {
     },
     {
       id: 'scheduled_reconciliation_hourly',
-      queue: 'platform',
-      type: 'FENGINE_EVENT',
+      queue: 'payments',
+      type: 'PAYMENT_RECONCILIATION',
       every_ms: 60 * 60 * 1000,
-      payload: { event_type: 'SCHEDULED_PAYMENT_RECONCILIATION' },
+      payload: {},
     },
     {
       id: 'scheduled_reports_daily',
@@ -50,6 +50,7 @@ export class SchedulerService implements OnModuleInit {
       return;
     }
 
+    await this.store.removeSchedule('platform', 'scheduled_reconciliation_hourly');
     await this.store.removeSchedule('payments', 'scheduled_reconciliation_hourly');
     for (const schedule of this.schedules) {
       await this.store.schedule({

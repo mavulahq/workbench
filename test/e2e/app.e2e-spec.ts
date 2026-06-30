@@ -48,5 +48,6 @@ describe('fwk (e2e)', () => {
     const metrics = await statusController.metrics();
     expect(metrics).toHaveProperty('worker_running');
     expect(metrics).toHaveProperty('queues');
+    expect(metrics).toHaveProperty('payment_processes');
   });
 });

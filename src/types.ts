@@ -10,6 +10,7 @@ export const JOB_TYPES = [
   'PAYMENT_CAPTURE',
   'PAYMENT_SETTLEMENT',
   'PAYMENT_DISBURSEMENT',
+  'PAYMENT_RECONCILIATION',
   'FENGINE_EVENT',
   'PLATFORM_HEALTH_CHECK',
 ] as const;
@@ -85,6 +86,13 @@ export interface WorkerHealthMetrics {
   processed_total: number;
   failed_total: number;
   queues: QueueStats[];
+  payment_processes?: {
+    active: number;
+    failed: number;
+    expired: number;
+    compensation_required: number;
+    outbox_pending: number;
+  };
   last_heartbeat?: string;
   last_error?: string;
 }

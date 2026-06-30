@@ -7,19 +7,25 @@
 import { Injectable } from '@nestjs/common';
 import { WorkerJob } from '../types';
 import { getRuntimeConfig } from '../utils/runtime-config';
+import { PaymentProcessRuntimeService } from './payment-process-runtime.service';
 
 @Injectable()
 export class JobHandlersService {
   private readonly config = getRuntimeConfig();
+
+  constructor(private readonly payments: PaymentProcessRuntimeService) {}
 
   async handle(job: WorkerJob): Promise<any> {
     switch (job.type) {
       case 'PLATFORM_HEALTH_CHECK':
         return this.platformHealthCheck(job);
       case 'PAYMENT_CAPTURE':
-      case 'PAYMENT_SETTLEMENT':
       case 'PAYMENT_DISBURSEMENT':
-        return this.paymentJob(job);
+        return this.startPaymentProcess(job);
+      case 'PAYMENT_SETTLEMENT':
+        return this.recordPaymentSettlement(job);
+      case 'PAYMENT_RECONCILIATION':
+        return this.reconcilePayments(job);
       case 'FENGINE_EVENT':
         return this.fengineEvent(job);
       default:
@@ -35,13 +41,72 @@ export class JobHandlersService {
     };
   }
 
-  private async paymentJob(job: WorkerJob) {
+  private async startPaymentProcess(job: WorkerJob) {
+    const payload = job.payload;
+    const process = await this.payments.getManager().start({
+      tenantId: job.tenant_id,
+      idempotencyKey: this.requiredString(payload.idempotency_key || payload.idempotencyKey || job.id, 'idempotency_key'),
+      correlationId: this.requiredString(payload.correlation_id || payload.correlationId || job.id, 'correlation_id'),
+      rail: this.requiredString(payload.rail, 'rail') as any,
+      amount: payload.amount,
+      payer: payload.payer,
+      payee: payload.payee,
+      providerReference: payload.provider_reference || payload.providerReference,
+      metadata: payload.metadata,
+    });
     return {
       accepted: true,
-      payment_reference: job.payload.payment_reference || job.id,
+      process_id: process.id,
+      state: process.state,
       type: job.type,
       processed_at: new Date().toISOString(),
     };
+  }
+
+  private async recordPaymentSettlement(job: WorkerJob) {
+    const payload = job.payload;
+    const process = await this.payments.getManager().recordWebhook({
+      tenantId: job.tenant_id,
+      providerReference: this.requiredString(
+        payload.provider_reference || payload.providerReference || payload.payment_reference,
+        'provider_reference',
+      ),
+      providerEventId: this.requiredString(
+        payload.provider_event_id || payload.providerEventId || payload.webhook_event_id || job.id,
+        'provider_event_id',
+      ),
+      status: (payload.status || 'succeeded') as any,
+      failureReason: payload.failure_reason || payload.failureReason,
+      payload,
+    });
+    return {
+      accepted: true,
+      process_id: process.id,
+      state: process.state,
+      type: job.type,
+      processed_at: new Date().toISOString(),
+    };
+  }
+
+  private async reconcilePayments(job: WorkerJob) {
+    const tenantId = job.tenant_id === 'system' ? undefined : job.tenant_id;
+    const result = await this.payments.getManager().reconcile({
+      tenantId,
+      limit: Number(job.payload.limit || this.config.paymentReconciliationLimit),
+    });
+    return {
+      accepted: true,
+      ...result,
+      type: job.type,
+      processed_at: new Date().toISOString(),
+    };
+  }
+
+  private requiredString(value: any, field: string): string {
+    if (typeof value !== 'string' || !value.trim()) {
+      throw new Error(`${field} is required`);
+    }
+    return value;
   }
 
   private async fengineEvent(job: WorkerJob) {
