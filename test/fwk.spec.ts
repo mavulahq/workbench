@@ -3,12 +3,14 @@ import { AppModule } from '../src/app.module';
 import { JobsController } from '../src/controllers/jobs.controller';
 import { StatusController } from '../src/controllers/status.controller';
 import { PlatformStatusService } from '../src/status/platform-status.service';
+import { PaymentProcessRuntimeService } from '../src/worker/payment-process-runtime.service';
 import { WorkerService } from '../src/worker/worker.service';
 
 describe('fwk - worker runtime', () => {
   let moduleFixture: TestingModule;
   let jobsController: JobsController;
   let statusController: StatusController;
+  let paymentRuntime: PaymentProcessRuntimeService;
   let worker: WorkerService;
 
   beforeAll(async () => {
@@ -27,6 +29,7 @@ describe('fwk - worker runtime', () => {
     await moduleFixture.init();
     jobsController = moduleFixture.get(JobsController);
     statusController = moduleFixture.get(StatusController);
+    paymentRuntime = moduleFixture.get(PaymentProcessRuntimeService);
     worker = moduleFixture.get(WorkerService);
   });
 
@@ -351,6 +354,19 @@ describe('fwk - worker runtime', () => {
       compensation_required: expect.any(Number),
       outbox_pending: expect.any(Number),
     });
+  });
+
+  it('keeps worker health metrics when payment metrics fail', async () => {
+    const metricsSpy = jest
+      .spyOn(paymentRuntime, 'metrics')
+      .mockRejectedValueOnce(new Error('payment metrics unavailable'));
+
+    const metrics = await statusController.metrics();
+
+    expect(metrics.worker_enabled).toBe(false);
+    expect(metrics.queues.some((queue: any) => queue.queue === 'payments')).toBe(true);
+    expect(metrics).not.toHaveProperty('payment_processes');
+    metricsSpy.mockRestore();
   });
 
   it('includes fengine projection status when available', async () => {
