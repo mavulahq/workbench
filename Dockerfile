@@ -23,7 +23,7 @@ COPY packages/fwk/package.json packages/fwk/package.json
 RUN --mount=type=cache,id=getfluxo-pnpm-store,target=/pnpm/store,sharing=locked \
     npm i -g pnpm@10.33.0 && \
     pnpm config set store-dir /pnpm/store && \
-    pnpm install --filter @getfluxo/fwk --prod --frozen-lockfile --ignore-scripts
+    pnpm install --filter @getfluxo/fwk... --prod --frozen-lockfile --ignore-scripts
 COPY --from=builder /usr/src/app/packages/fpay/dist packages/fpay/dist
 COPY --from=builder /usr/src/app/packages/fwk/dist ./dist
 ENV NODE_ENV=production

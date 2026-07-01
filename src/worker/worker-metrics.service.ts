@@ -57,22 +57,27 @@ export class WorkerMetricsService {
       '# HELP fwk_worker_failed_total Failed jobs.',
       '# TYPE fwk_worker_failed_total counter',
       `fwk_worker_failed_total ${metrics.failed_total}`,
-      '# HELP fwk_payment_process_active Active payment processes.',
-      '# TYPE fwk_payment_process_active gauge',
-      `fwk_payment_process_active ${metrics.payment_processes?.active ?? 0}`,
-      '# HELP fwk_payment_process_failed Failed payment processes.',
-      '# TYPE fwk_payment_process_failed gauge',
-      `fwk_payment_process_failed ${metrics.payment_processes?.failed ?? 0}`,
-      '# HELP fwk_payment_process_expired Expired payment processes.',
-      '# TYPE fwk_payment_process_expired gauge',
-      `fwk_payment_process_expired ${metrics.payment_processes?.expired ?? 0}`,
-      '# HELP fwk_payment_process_compensation_required Payment processes requiring compensation.',
-      '# TYPE fwk_payment_process_compensation_required gauge',
-      `fwk_payment_process_compensation_required ${metrics.payment_processes?.compensation_required ?? 0}`,
-      '# HELP fwk_payment_outbox_pending Pending payment outbox events.',
-      '# TYPE fwk_payment_outbox_pending gauge',
-      `fwk_payment_outbox_pending ${metrics.payment_processes?.outbox_pending ?? 0}`,
     ];
+
+    if (metrics.payment_processes) {
+      lines.push(
+        '# HELP fwk_payment_process_active Active payment processes.',
+        '# TYPE fwk_payment_process_active gauge',
+        `fwk_payment_process_active ${metrics.payment_processes.active}`,
+        '# HELP fwk_payment_process_failed Failed payment processes.',
+        '# TYPE fwk_payment_process_failed gauge',
+        `fwk_payment_process_failed ${metrics.payment_processes.failed}`,
+        '# HELP fwk_payment_process_expired Expired payment processes.',
+        '# TYPE fwk_payment_process_expired gauge',
+        `fwk_payment_process_expired ${metrics.payment_processes.expired}`,
+        '# HELP fwk_payment_process_compensation_required Payment processes requiring compensation.',
+        '# TYPE fwk_payment_process_compensation_required gauge',
+        `fwk_payment_process_compensation_required ${metrics.payment_processes.compensation_required}`,
+        '# HELP fwk_payment_outbox_pending Pending payment outbox events.',
+        '# TYPE fwk_payment_outbox_pending gauge',
+        `fwk_payment_outbox_pending ${metrics.payment_processes.outbox_pending}`,
+      );
+    }
 
     for (const queue of metrics.queues) {
       lines.push(`fwk_queue_queued{queue="${queue.queue}"} ${queue.queued}`);

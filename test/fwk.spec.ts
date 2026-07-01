@@ -369,6 +369,19 @@ describe('fwk - worker runtime', () => {
     metricsSpy.mockRestore();
   });
 
+  it('omits payment gauges when payment metrics fail', async () => {
+    const metricsSpy = jest
+      .spyOn(paymentRuntime, 'metrics')
+      .mockRejectedValueOnce(new Error('payment metrics unavailable'));
+
+    const prometheus = await statusController.prometheusMetrics();
+
+    expect(prometheus).toContain('fwk_worker_running');
+    expect(prometheus).not.toContain('fwk_payment_process_active');
+    expect(prometheus).not.toContain('fwk_payment_outbox_pending');
+    metricsSpy.mockRestore();
+  });
+
   it('includes fengine projection status when available', async () => {
     const fetchMock = jest.spyOn(global, 'fetch')
       .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ status: 'ok' }) } as any)
