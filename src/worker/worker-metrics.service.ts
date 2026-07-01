@@ -20,11 +20,9 @@ export class WorkerMetricsService {
 
   async snapshot(): Promise<WorkerHealthMetrics> {
     const worker = this.worker.status();
-    const [queues, paymentProcesses] = await Promise.all([
-      Promise.all(worker.queues.map((queue) => this.store.stats(queue))),
-      this.paymentProcesses.metrics(),
-    ]);
-    return {
+    const queues = await Promise.all(worker.queues.map((queue) => this.store.stats(queue)));
+    const paymentProcesses = await this.paymentProcesses.metrics().catch(() => undefined);
+    const metrics: WorkerHealthMetrics = {
       worker_enabled: worker.enabled,
       worker_running: worker.running,
       processed_total: worker.processed,
@@ -32,14 +30,19 @@ export class WorkerMetricsService {
       last_heartbeat: worker.last_heartbeat,
       last_error: worker.last_error,
       queues,
-      payment_processes: {
+    };
+
+    if (paymentProcesses) {
+      metrics.payment_processes = {
         active: paymentProcesses.active,
         failed: paymentProcesses.failed,
         expired: paymentProcesses.expired,
         compensation_required: paymentProcesses.compensationRequired,
         outbox_pending: paymentProcesses.outboxPending,
-      },
-    };
+      };
+    }
+
+    return metrics;
   }
 
   async prometheus(): Promise<string> {
