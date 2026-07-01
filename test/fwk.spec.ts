@@ -3,6 +3,7 @@ import { AppModule } from '../src/app.module';
 import { JobsController } from '../src/controllers/jobs.controller';
 import { StatusController } from '../src/controllers/status.controller';
 import { PlatformStatusService } from '../src/status/platform-status.service';
+import { PaymentOutboxPublisherService } from '../src/worker/payment-outbox-publisher.service';
 import { PaymentProcessRuntimeService } from '../src/worker/payment-process-runtime.service';
 import { WorkerService } from '../src/worker/worker.service';
 
@@ -10,6 +11,7 @@ describe('fwk - worker runtime', () => {
   let moduleFixture: TestingModule;
   let jobsController: JobsController;
   let statusController: StatusController;
+  let paymentOutboxPublisher: PaymentOutboxPublisherService;
   let paymentRuntime: PaymentProcessRuntimeService;
   let worker: WorkerService;
 
@@ -21,6 +23,8 @@ describe('fwk - worker runtime', () => {
     process.env.INTERNAL_API_KEY = 'test-internal-key';
     process.env.FENGINE_STATUS_ENABLED = 'false';
     process.env.FWK_PAYMENT_PROCESS_STORE = 'memory';
+    process.env.FPAY_SETTLEMENT_OUTBOX_ENABLED = 'true';
+    process.env.FPAY_OUTBOX_PUBLISHER_ENABLED = 'false';
 
     moduleFixture = await Test.createTestingModule({
       imports: [AppModule],
@@ -29,6 +33,7 @@ describe('fwk - worker runtime', () => {
     await moduleFixture.init();
     jobsController = moduleFixture.get(JobsController);
     statusController = moduleFixture.get(StatusController);
+    paymentOutboxPublisher = moduleFixture.get(PaymentOutboxPublisherService);
     paymentRuntime = moduleFixture.get(PaymentProcessRuntimeService);
     worker = moduleFixture.get(WorkerService);
   });
@@ -43,6 +48,8 @@ describe('fwk - worker runtime', () => {
     delete process.env.FENGINE_STATUS_ENABLED;
     delete process.env.FENGINE_PROJECTION_STATUS_ENABLED;
     delete process.env.FWK_PAYMENT_PROCESS_STORE;
+    delete process.env.FPAY_SETTLEMENT_OUTBOX_ENABLED;
+    delete process.env.FPAY_OUTBOX_PUBLISHER_ENABLED;
   });
 
   it('returns a public health payload', async () => {
@@ -336,6 +343,70 @@ describe('fwk - worker runtime', () => {
     fetchMock.mockRestore();
   });
 
+  it('publishes payment settlement outbox events to fengine event jobs', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        accepted: true,
+        event_id: 'evt_payment_settlement_completed_001',
+      }),
+    } as any);
+    const manager = paymentRuntime.getManager();
+
+    await manager.start({
+      tenantId: 'test_inst_001',
+      idempotencyKey: 'idem_payment_outbox_001',
+      correlationId: 'corr_payment_outbox_001',
+      rail: 'mpesa',
+      amount: {
+        currency: 'MZN',
+        valueMinor: 15000,
+      },
+      payer: {
+        accountRef: 'customer_001',
+        phoneNumber: '+258840000000',
+      },
+      payee: {
+        accountRef: 'merchant_001',
+      },
+      providerReference: 'provider_payment_outbox_001',
+    });
+    await manager.recordWebhook({
+      tenantId: 'test_inst_001',
+      providerReference: 'provider_payment_outbox_001',
+      providerEventId: 'provider_event_payment_outbox_001',
+      status: 'succeeded',
+    });
+
+    await expect(paymentRuntime.metrics()).resolves.toMatchObject({
+      outboxPending: expect.any(Number),
+    });
+
+    await expect(paymentOutboxPublisher.publishPending(1)).resolves.toEqual({
+      claimed: 1,
+      published: 1,
+      failed: 0,
+    });
+    await expect(paymentRuntime.metrics()).resolves.toMatchObject({
+      outboxPending: 0,
+      outboxPublished: expect.any(Number),
+    });
+
+    expect(await worker.processOnce()).toBe(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://fengine.test/api/internal/worker/domain-events',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('payments.settlement_completed'),
+        headers: expect.objectContaining({
+          'x-internal-api-key': 'test-internal-key',
+        }),
+      }),
+    );
+    fetchMock.mockRestore();
+  });
+
   it('exposes queue stats in platform status', async () => {
     const status = await statusController.status();
     expect(status.service).toBe('fwk');
@@ -353,6 +424,9 @@ describe('fwk - worker runtime', () => {
       expired: expect.any(Number),
       compensation_required: expect.any(Number),
       outbox_pending: expect.any(Number),
+      outbox_publishing: expect.any(Number),
+      outbox_published: expect.any(Number),
+      outbox_failed: expect.any(Number),
     });
   });
 

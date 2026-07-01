@@ -92,6 +92,9 @@ export interface WorkerHealthMetrics {
     expired: number;
     compensation_required: number;
     outbox_pending: number;
+    outbox_publishing: number;
+    outbox_published: number;
+    outbox_failed: number;
   };
   last_heartbeat?: string;
   last_error?: string;
