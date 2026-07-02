@@ -39,6 +39,9 @@ export class WorkerMetricsService {
         expired: paymentProcesses.expired,
         compensation_required: paymentProcesses.compensationRequired,
         outbox_pending: paymentProcesses.outboxPending,
+        outbox_publishing: paymentProcesses.outboxPublishing,
+        outbox_published: paymentProcesses.outboxPublished,
+        outbox_failed: paymentProcesses.outboxFailed,
       };
     }
 
@@ -76,6 +79,15 @@ export class WorkerMetricsService {
         '# HELP fwk_payment_outbox_pending Pending payment outbox events.',
         '# TYPE fwk_payment_outbox_pending gauge',
         `fwk_payment_outbox_pending ${metrics.payment_processes.outbox_pending}`,
+        '# HELP fwk_payment_outbox_publishing Leased payment outbox events.',
+        '# TYPE fwk_payment_outbox_publishing gauge',
+        `fwk_payment_outbox_publishing ${metrics.payment_processes.outbox_publishing}`,
+        '# HELP fwk_payment_outbox_published Published payment outbox events.',
+        '# TYPE fwk_payment_outbox_published gauge',
+        `fwk_payment_outbox_published ${metrics.payment_processes.outbox_published}`,
+        '# HELP fwk_payment_outbox_failed Failed payment outbox events.',
+        '# TYPE fwk_payment_outbox_failed gauge',
+        `fwk_payment_outbox_failed ${metrics.payment_processes.outbox_failed}`,
       );
     }
 
