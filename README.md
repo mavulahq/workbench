@@ -1,27 +1,27 @@
-# fwk
+# MAVULA Workbench
 
-`fwk` is the durable worker runtime and public platform-status API for Fluxo, the Banking as a Service (BaaS) platform by getfluxo.io.
+`@mavula/workbench` is the durable worker runtime and public platform status API
+for MAVULA.
+
+Legacy alias: `fwk`.
 
 ## Responsibilities
 
-- BullMQ consumers with bounded retries, backoff, and dead-letter queues.
-- Scheduled fees, interest, reconciliation, and report jobs.
-- Authenticated callbacks to `fengine`, dependency health, queue status, and metrics.
+- BullMQ consumers with bounded retries, backoff and dead-letter queues.
+- Scheduled fees, interest, reconciliation and report jobs.
+- Authenticated callbacks to Ledger Core.
+- Payment settlement outbox publishing.
+- Dependency health, queue status and Prometheus metrics.
 
 ## Development
 
-Use Node.js `22.22.3`, pnpm `10.33.0`, PostgreSQL, and Redis. Run commands from the root of the `getfluxo` workspace:
-
 ```bash
-pnpm install --frozen-lockfile
-pnpm --filter @getfluxo/fwk build
-pnpm --filter @getfluxo/fwk test:all
+pnpm --filter @mavula/workbench build
+pnpm --filter @mavula/workbench test:all
 ```
 
-Configure `DATABASE_URL`, `REDIS_URL`, `FENGINE_URL`, and `INTERNAL_API_KEY` for integrated operation. The service defaults to port `3010` and exposes `/api/health`, `/api/status`, and `/api/metrics`.
+Preferred environment names are `LEDGER_CORE_URL`, `WORKBENCH_*` and
+`SETTLEMENTS_*`. Legacy `FENGINE_*`, `FWK_*` and `FPAY_*` names remain supported
+during the transition.
 
-## Repository
-
-The canonical workspace is `git@github.com:getfluxo-io/getfluxo.git`.
-
-Copyright (c) 2026 getfluxo.io. Proprietary software. See `LICENSE`.
+License: AGPL-3.0-only.

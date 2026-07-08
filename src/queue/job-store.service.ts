@@ -1,7 +1,7 @@
 /*
- * getfluxo.io - Worker Kit BullMQ Queue Store
- * Copyright (c) 2026 getfluxo.io
- * License: PROPRIETARY
+ * mavula.io - Worker Kit BullMQ Queue Store
+ * Copyright (c) 2026 mavula.io
+ * SPDX-License-Identifier: AGPL-3.0-only
  */
 
 import { Injectable, OnModuleDestroy } from '@nestjs/common';

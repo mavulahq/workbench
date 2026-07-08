@@ -1,7 +1,7 @@
 /*
- * getfluxo.io - Worker Kit Job Handlers
- * Copyright (c) 2026 getfluxo.io
- * License: PROPRIETARY
+ * MAVULA Workbench Job Handlers
+ * Copyright (c) 2026 mavula.io
+ * SPDX-License-Identifier: AGPL-3.0-only
  */
 
 import { Injectable } from '@nestjs/common';
@@ -26,8 +26,9 @@ export class JobHandlersService {
         return this.recordPaymentSettlement(job);
       case 'PAYMENT_RECONCILIATION':
         return this.reconcilePayments(job);
+      case 'LEDGER_CORE_EVENT':
       case 'FENGINE_EVENT':
-        return this.fengineEvent(job);
+        return this.ledgerCoreEvent(job);
       default:
         throw new Error(`Unsupported job type: ${job.type}`);
     }
@@ -109,14 +110,14 @@ export class JobHandlersService {
     return value;
   }
 
-  private async fengineEvent(job: WorkerJob) {
+  private async ledgerCoreEvent(job: WorkerJob) {
     if (!this.config.internalApiKey) {
-      throw new Error('INTERNAL_API_KEY is required to dispatch fengine events');
+      throw new Error('INTERNAL_API_KEY is required to dispatch ledger-core events');
     }
 
     const domainEvent = this.extractDomainEvent(job.payload);
     if (domainEvent) {
-      return this.fengineDomainEvent(job, domainEvent);
+      return this.ledgerCoreDomainEvent(job, domainEvent);
     }
 
     const response = await fetch(`${this.config.fengineUrl}/api/internal/worker/events`, {
@@ -135,7 +136,7 @@ export class JobHandlersService {
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(`fengine callback failed (${response.status}): ${JSON.stringify(body)}`);
+      throw new Error(`ledger-core callback failed (${response.status}): ${JSON.stringify(body)}`);
     }
     return body;
   }
@@ -167,7 +168,7 @@ export class JobHandlersService {
     );
   }
 
-  private async fengineDomainEvent(job: WorkerJob, event: Record<string, any>) {
+  private async ledgerCoreDomainEvent(job: WorkerJob, event: Record<string, any>) {
     const response = await fetch(`${this.config.fengineUrl}/api/internal/worker/domain-events`, {
       method: 'POST',
       headers: {
@@ -182,7 +183,7 @@ export class JobHandlersService {
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(`fengine domain event callback failed (${response.status}): ${JSON.stringify(body)}`);
+      throw new Error(`ledger-core domain event callback failed (${response.status}): ${JSON.stringify(body)}`);
     }
     return body;
   }

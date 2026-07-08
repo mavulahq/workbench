@@ -1,7 +1,7 @@
 /*
- * getfluxo.io - Worker Kit Public Status API
- * Copyright (c) 2026 getfluxo.io
- * License: PROPRIETARY
+ * mavula.io - Worker Kit Public Status API
+ * Copyright (c) 2026 mavula.io
+ * SPDX-License-Identifier: AGPL-3.0-only
  */
 
 import { Controller, Get, Header } from '@nestjs/common';

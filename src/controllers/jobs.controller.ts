@@ -1,7 +1,7 @@
 /*
- * getfluxo.io - Worker Kit Jobs API
- * Copyright (c) 2026 getfluxo.io
- * License: PROPRIETARY
+ * mavula.io - Worker Kit Jobs API
+ * Copyright (c) 2026 mavula.io
+ * SPDX-License-Identifier: AGPL-3.0-only
  */
 
 import { BadRequestException, Body, Controller, Get, NotFoundException, Param, Post } from '@nestjs/common';

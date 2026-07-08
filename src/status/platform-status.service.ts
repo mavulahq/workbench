@@ -1,7 +1,7 @@
 /*
- * getfluxo.io - Worker Kit Public Platform Status
- * Copyright (c) 2026 getfluxo.io
- * License: PROPRIETARY
+ * MAVULA Workbench Public Platform Status
+ * Copyright (c) 2026 mavula.io
+ * SPDX-License-Identifier: AGPL-3.0-only
  */
 
 import { Injectable } from '@nestjs/common';
@@ -34,14 +34,14 @@ export class PlatformStatusService {
   }
 
   async status() {
-    const [postgres, redis, fengine, queues] = await Promise.all([
+    const [postgres, redis, ledgerCore, queues] = await Promise.all([
       checkTcpUrl(this.config.databaseUrl, 5432),
       this.redisStatus(),
-      this.fengineStatus(),
+      this.ledgerCoreStatus(),
       this.queueStats(),
     ]);
     const worker = this.worker.status();
-    const status = this.overallStatus(postgres, redis, fengine, worker.running || !worker.enabled);
+    const status = this.overallStatus(postgres, redis, ledgerCore, worker.running || !worker.enabled);
 
     return {
       status,
@@ -53,7 +53,8 @@ export class PlatformStatusService {
       dependencies: {
         postgres,
         redis,
-        fengine,
+        ledger_core: ledgerCore,
+        fengine: ledgerCore,
       },
       worker,
       schedules: this.scheduler.list(),
@@ -95,9 +96,9 @@ export class PlatformStatusService {
     }
   }
 
-  private async fengineStatus(): Promise<DependencyStatus> {
+  private async ledgerCoreStatus(): Promise<DependencyStatus> {
     if (!this.config.fengineStatusEnabled) {
-      return { status: 'degraded', message: 'fengine status check disabled' };
+      return { status: 'degraded', message: 'ledger-core status check disabled' };
     }
 
     const started = Date.now();
@@ -175,9 +176,13 @@ export class PlatformStatusService {
       return {
         status: 'down',
         latency_ms: Date.now() - started,
-        message: error?.message || 'fengine unavailable',
+        message: error?.message || 'ledger-core unavailable',
       };
     }
+  }
+
+  private async fengineStatus(): Promise<DependencyStatus> {
+    return this.ledgerCoreStatus();
   }
 
   private remainingTimeoutMs(started: number, timeoutBudgetMs: number): number {
@@ -187,13 +192,13 @@ export class PlatformStatusService {
   private overallStatus(
     postgres: DependencyStatus,
     redis: DependencyStatus,
-    fengine: DependencyStatus,
+    ledgerCore: DependencyStatus,
     workerReady: boolean,
   ): 'ok' | 'degraded' | 'down' {
-    if (postgres.status === 'down' || redis.status === 'down' || fengine.status === 'down') {
+    if (postgres.status === 'down' || redis.status === 'down' || ledgerCore.status === 'down') {
       return 'down';
     }
-    if (!workerReady || postgres.status === 'degraded' || redis.status === 'degraded' || fengine.status === 'degraded') {
+    if (!workerReady || postgres.status === 'degraded' || redis.status === 'degraded' || ledgerCore.status === 'degraded') {
       return 'degraded';
     }
     return 'ok';

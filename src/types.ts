@@ -1,7 +1,7 @@
 /*
- * getfluxo.io - Worker Kit Shared Types
- * Copyright (c) 2026 getfluxo.io
- * License: PROPRIETARY
+ * MAVULA Workbench Shared Types
+ * Copyright (c) 2026 mavula.io
+ * SPDX-License-Identifier: AGPL-3.0-only
  */
 
 export type JobStatus = 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
@@ -11,6 +11,7 @@ export const JOB_TYPES = [
   'PAYMENT_SETTLEMENT',
   'PAYMENT_DISBURSEMENT',
   'PAYMENT_RECONCILIATION',
+  'LEDGER_CORE_EVENT',
   'FENGINE_EVENT',
   'PLATFORM_HEALTH_CHECK',
 ] as const;

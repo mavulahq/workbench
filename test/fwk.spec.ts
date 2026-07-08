@@ -54,7 +54,7 @@ describe('fwk - worker runtime', () => {
 
   it('returns a public health payload', async () => {
     const health = await statusController.health();
-    expect(health).toMatchObject({ status: 'ok', service: 'fwk' });
+    expect(health).toMatchObject({ status: 'ok', service: 'workbench' });
   });
 
   it('enqueues and processes payment jobs', async () => {
@@ -112,7 +112,7 @@ describe('fwk - worker runtime', () => {
     } as any);
     const job = await jobsController.create({
       queue: 'platform',
-      type: 'FENGINE_EVENT',
+      type: 'LEDGER_CORE_EVENT',
       tenant_id: 'test_inst_001',
       payload: { event_type: 'LOAN_APPROVED', loan_id: 'loan_001' },
     });
@@ -167,7 +167,7 @@ describe('fwk - worker runtime', () => {
 
     const job = await jobsController.create({
       queue: 'platform',
-      type: 'FENGINE_EVENT',
+      type: 'LEDGER_CORE_EVENT',
       tenant_id: 'test_inst_001',
       payload: { domain_event: true, event, event_type: event.event_type },
     });
@@ -225,7 +225,7 @@ describe('fwk - worker runtime', () => {
 
     const job = await jobsController.create({
       queue: 'platform',
-      type: 'FENGINE_EVENT',
+      type: 'LEDGER_CORE_EVENT',
       tenant_id: 'test_inst_001',
       payload: event,
     });
@@ -257,7 +257,7 @@ describe('fwk - worker runtime', () => {
 
     const job = await jobsController.create({
       queue: 'platform',
-      type: 'FENGINE_EVENT',
+      type: 'LEDGER_CORE_EVENT',
       tenant_id: 'test_inst_001',
       payload: {
         domain_event: true,
@@ -323,7 +323,7 @@ describe('fwk - worker runtime', () => {
 
     const job = await jobsController.create({
       queue: 'platform',
-      type: 'FENGINE_EVENT',
+      type: 'LEDGER_CORE_EVENT',
       tenant_id: 'test_inst_001',
       payload: event,
     });
@@ -409,7 +409,7 @@ describe('fwk - worker runtime', () => {
 
   it('exposes queue stats in platform status', async () => {
     const status = await statusController.status();
-    expect(status.service).toBe('fwk');
+    expect(status.service).toBe('workbench');
     expect(status.queues.some((queue: any) => queue.queue === 'payments')).toBe(true);
     expect(status.schedules.some((schedule: any) => schedule.id === 'scheduled_reconciliation_hourly')).toBe(true);
   });
