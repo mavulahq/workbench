@@ -1,7 +1,7 @@
 /*
  * getfluxo.io - Worker Kit Runtime
  * Copyright (c) 2026 getfluxo.io
- * License: PROPRIETARY
+ * SPDX-License-Identifier: AGPL-3.0-only
  */
 
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';

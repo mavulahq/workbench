@@ -1,7 +1,7 @@
 /*
- * getfluxo.io - Worker Kit Scheduled Jobs
- * Copyright (c) 2026 getfluxo.io
- * License: PROPRIETARY
+ * MAVULA Workbench Scheduled Jobs
+ * Copyright (c) 2026 mavula.io
+ * SPDX-License-Identifier: AGPL-3.0-only
  */
 
 import { Injectable, OnModuleInit } from '@nestjs/common';
@@ -16,14 +16,14 @@ export class SchedulerService implements OnModuleInit {
     {
       id: 'scheduled_fees_daily',
       queue: 'platform',
-      type: 'FENGINE_EVENT',
+      type: 'LEDGER_CORE_EVENT',
       every_ms: 24 * 60 * 60 * 1000,
       payload: { event_type: 'SCHEDULED_FEES_ACCRUAL' },
     },
     {
       id: 'scheduled_interest_daily',
       queue: 'platform',
-      type: 'FENGINE_EVENT',
+      type: 'LEDGER_CORE_EVENT',
       every_ms: 24 * 60 * 60 * 1000,
       payload: { event_type: 'SCHEDULED_INTEREST_ACCRUAL' },
     },
@@ -37,7 +37,7 @@ export class SchedulerService implements OnModuleInit {
     {
       id: 'scheduled_reports_daily',
       queue: 'platform',
-      type: 'FENGINE_EVENT',
+      type: 'LEDGER_CORE_EVENT',
       every_ms: 24 * 60 * 60 * 1000,
       payload: { event_type: 'SCHEDULED_REPORT_GENERATION' },
     },

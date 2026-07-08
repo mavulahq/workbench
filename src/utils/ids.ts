@@ -1,7 +1,7 @@
 /*
  * getfluxo.io - Worker Kit Identifiers
  * Copyright (c) 2026 getfluxo.io
- * License: PROPRIETARY
+ * SPDX-License-Identifier: AGPL-3.0-only
  */
 
 import { randomUUID } from 'crypto';

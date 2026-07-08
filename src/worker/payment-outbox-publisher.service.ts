@@ -1,11 +1,11 @@
 /*
- * getfluxo.io - Payment Outbox Publisher
- * Copyright (c) 2026 getfluxo.io
- * License: PROPRIETARY
+ * MAVULA Workbench Payment Outbox Publisher
+ * Copyright (c) 2026 mavula.io
+ * SPDX-License-Identifier: AGPL-3.0-only
  */
 
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { PaymentOutboxEvent } from '@getfluxo/fpay';
+import { PaymentOutboxEvent } from '@mavula/settlements';
 import { JobStoreService } from '../queue/job-store.service';
 import { getRuntimeConfig } from '../utils/runtime-config';
 import { PaymentProcessRuntimeService } from './payment-process-runtime.service';
@@ -19,7 +19,7 @@ export interface PaymentOutboxPublishResult {
 @Injectable()
 export class PaymentOutboxPublisherService implements OnModuleInit, OnModuleDestroy {
   private readonly config = getRuntimeConfig();
-  private readonly lockedBy = `fwk-payment-outbox-${process.pid}`;
+  private readonly lockedBy = `workbench-payment-outbox-${process.pid}`;
   private timer?: ReturnType<typeof setInterval>;
   private running = false;
   private lastError?: string;
@@ -75,7 +75,7 @@ export class PaymentOutboxPublisherService implements OnModuleInit, OnModuleDest
 
       for (const event of events) {
         try {
-          await this.enqueueFengineEvent(event);
+          await this.enqueueLedgerCoreEvent(event);
           await manager.markOutboxEventPublished(event);
           result.published += 1;
         } catch (error) {
@@ -96,10 +96,10 @@ export class PaymentOutboxPublisherService implements OnModuleInit, OnModuleDest
     }
   }
 
-  private async enqueueFengineEvent(event: PaymentOutboxEvent): Promise<void> {
+  private async enqueueLedgerCoreEvent(event: PaymentOutboxEvent): Promise<void> {
     await this.jobs.enqueue({
       queue: 'platform',
-      type: 'FENGINE_EVENT',
+      type: 'LEDGER_CORE_EVENT',
       tenant_id: event.tenantId,
       max_attempts: event.maxAttempts,
       payload: {

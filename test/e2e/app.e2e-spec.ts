@@ -32,12 +32,12 @@ describe('fwk (e2e)', () => {
   });
 
   it('/api/health (GET)', async () => {
-    await expect(statusController.health()).resolves.toMatchObject({ status: 'ok', service: 'fwk' });
+    await expect(statusController.health()).resolves.toMatchObject({ status: 'ok', service: 'workbench' });
   });
 
   it('/api/status (GET)', async () => {
     const status = await statusController.status();
-    expect(status.service).toBe('fwk');
+    expect(status.service).toBe('workbench');
     expect(status).toHaveProperty('dependencies');
     expect(status).toHaveProperty('worker');
     expect(status).toHaveProperty('schedules');
