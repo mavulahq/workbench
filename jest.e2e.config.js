@@ -1,6 +1,6 @@
 /*
- * getfluxo.io - Worker Kit End-to-End Testing Configuration
- * Copyright (c) 2026 getfluxo.io
+ * mavula.io - Worker Kit End-to-End Testing Configuration
+ * Copyright (c) 2026 mavula.io
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 

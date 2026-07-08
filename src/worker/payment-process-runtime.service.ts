@@ -1,6 +1,6 @@
 /*
- * getfluxo.io - Payment Process Runtime
- * Copyright (c) 2026 getfluxo.io
+ * mavula.io - Payment Process Runtime
+ * Copyright (c) 2026 mavula.io
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
