@@ -1,0 +1,64 @@
+name: MAVULA Guardian
+
+on:
+  pull_request: {}
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workbench-guardian-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guardian:
+    name: guardian
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval=10s --health-timeout=5s --health-retries=5
+    env:
+      REDIS_URL: redis://127.0.0.1:6379
+      INTERNAL_API_KEY: guardian-internal-api-key
+      LEDGER_CORE_URL: http://fengine.test
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.33.0
+      - name: Use Node.js 22.22.3
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.22.3
+      - name: Prepare settlements workspace
+        run: |
+          branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          if git ls-remote --exit-code --heads https://github.com/mavulahq/settlements "$branch"; then
+            git clone --depth 1 --branch "$branch" https://github.com/mavulahq/settlements ../settlements
+          else
+            git clone --depth 1 https://github.com/mavulahq/settlements ../settlements
+          fi
+          cat > pnpm-workspace.yaml <<'YAML'
+          packages:
+            - .
+            - ../settlements
+          YAML
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+      - name: Run guardian
+        run: pnpm guardian:check
+      - name: Build settlements package
+        run: pnpm --filter @mavula/settlements build
+      - name: Build
+        run: pnpm build
+      - name: Test
+        run: pnpm test:all
