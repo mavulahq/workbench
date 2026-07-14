@@ -262,6 +262,7 @@ describe('workbench worker runtime', () => {
       queue: 'platform',
       type: 'LEDGER_CORE_EVENT',
       tenant_id: 'test_inst_001',
+      max_attempts: 1,
       payload: {
         domain_event: true,
         event_type: 'lending.payment_posted',
@@ -343,6 +344,40 @@ describe('workbench worker runtime', () => {
         body: expect.stringContaining(event.event_id),
       }),
     );
+    fetchMock.mockRestore();
+  });
+
+  it('rejects a domain event from another tenant before requesting a service token', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch');
+    const serviceTokens = moduleFixture.get(ServiceTokenService);
+    const tokenMock = jest.spyOn(serviceTokens, 'forTenant');
+    tokenMock.mockClear();
+    const job = await jobsController.create({ tenantId: 'test_inst_001' }, {
+      queue: 'platform',
+      type: 'LEDGER_CORE_EVENT',
+      tenant_id: 'test_inst_001',
+      max_attempts: 1,
+      payload: {
+        event_id: 'evt_cross_tenant',
+        event_type: 'ledger.journal_posted',
+        event_version: 1,
+        occurred_at: '2026-07-14T00:00:00.000Z',
+        tenant_id: 'test_inst_002',
+        aggregate: { type: 'journal_entry', id: 'entry-1', version: 1 },
+        correlation_id: 'corr-cross-tenant',
+        causation_id: 'cmd-cross-tenant',
+        payload: {},
+        metadata: {},
+      },
+    });
+
+    expect(await worker.processOnce()).toBe(1);
+    await expect(jobsController.get(job.id)).resolves.toMatchObject({
+      status: 'FAILED',
+      last_error: 'domain event tenant does not match the worker job tenant',
+    });
+    expect(tokenMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
     fetchMock.mockRestore();
   });
 

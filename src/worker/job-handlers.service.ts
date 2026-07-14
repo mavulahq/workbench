@@ -169,6 +169,11 @@ export class JobHandlersService {
   }
 
   private async ledgerCoreDomainEvent(job: WorkerJob, event: Record<string, any>) {
+    const eventTenantId = event.tenant_id || job.tenant_id;
+    if (eventTenantId !== job.tenant_id) {
+      throw new Error('domain event tenant does not match the worker job tenant');
+    }
+    const scopedEvent = { ...event, tenant_id: eventTenantId };
     const response = await fetch(`${this.config.fengineUrl}/api/internal/worker/domain-events`, {
       method: 'POST',
       headers: {
@@ -177,7 +182,7 @@ export class JobHandlersService {
       },
       body: JSON.stringify({
         job_id: job.id,
-        event,
+        event: scopedEvent,
       }),
       signal: AbortSignal.timeout(this.config.internalRequestTimeoutMs),
     });
