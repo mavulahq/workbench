@@ -16,7 +16,7 @@ WORKDIR /usr/src/app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY packages/settlements/package.json packages/settlements/package.json
 COPY packages/workbench/package.json packages/workbench/package.json
-RUN --mount=type=cache,id=getfluxo-pnpm-store,target=/pnpm/store,sharing=locked \
+RUN --mount=type=cache,id=mavula-pnpm-store,target=/pnpm/store,sharing=locked \
     npm i -g pnpm@10.33.0 && \
     pnpm config set store-dir /pnpm/store && \
     pnpm install --filter @mavula/workbench... --frozen-lockfile --prod=false --ignore-scripts

@@ -3,15 +3,17 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AppModule } from '../../src/app.module';
 import { StatusController } from '../../src/controllers/status.controller';
 
-describe('fwk (e2e)', () => {
+describe('workbench (e2e)', () => {
   let app: INestApplication;
   let statusController: StatusController;
 
   beforeAll(async () => {
-    process.env.FWK_QUEUE_BACKEND = 'memory';
-    process.env.FWK_WORKER_ENABLED = 'false';
-    process.env.INTERNAL_API_KEY = 'test-internal-key';
-    process.env.FENGINE_STATUS_ENABLED = 'false';
+    process.env.WORKBENCH_QUEUE_BACKEND = 'memory';
+    process.env.WORKBENCH_WORKER_ENABLED = 'false';
+    process.env.OIDC_ISSUER = 'https://identity.mavula.io';
+    process.env.OIDC_AUDIENCE = 'urn:mavula:workbench';
+    process.env.OIDC_JWKS_URI = 'https://identity.mavula.io/jwks';
+    process.env.LEDGER_CORE_STATUS_ENABLED = 'false';
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -25,10 +27,9 @@ describe('fwk (e2e)', () => {
 
   afterAll(async () => {
     await app.close();
-    delete process.env.FWK_QUEUE_BACKEND;
-    delete process.env.FWK_WORKER_ENABLED;
-    delete process.env.INTERNAL_API_KEY;
-    delete process.env.FENGINE_STATUS_ENABLED;
+    delete process.env.WORKBENCH_QUEUE_BACKEND;
+    delete process.env.WORKBENCH_WORKER_ENABLED;
+    delete process.env.LEDGER_CORE_STATUS_ENABLED;
   });
 
   it('/api/health (GET)', async () => {

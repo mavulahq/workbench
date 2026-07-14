@@ -35,6 +35,9 @@ if (pkg.dependencies?.["@mavula/settlements"] !== "workspace:*") {
   ".github/workflows/guardian.yml",
   "LICENSE",
   "README.md",
+  "src/auth/access-token.guard.ts",
+  "src/auth/permissions.guard.ts",
+  "src/auth/service-token.service.ts",
   "jest.config.js",
   "jest.e2e.config.js",
   "tsconfig.json",
@@ -50,13 +53,14 @@ if (!/@mavula\/workbench/.test(read("README.md"))) {
 const tracked = spawnSync("git", ["ls-files"], { encoding: "utf8" });
 if (tracked.status !== 0) fail("git ls-files failed");
 for (const file of tracked.stdout.split("\n").filter(Boolean)) {
+  if (!existsSync(file)) continue;
   if (/(^|\/)\.env($|\.(?!example$))/.test(file)) fail(`${file} must not be tracked`);
 }
 
 for (const path of ["package.json", "README.md", ".github/CODEOWNERS"]) {
   if (path === "scripts/guardian.mjs") continue;
   const content = read(path);
-  if (/getfluxo-io|@getfluxo|packages\/fengine|packages\/fwk|packages\/fpay|packages\/finfra/.test(content)) {
+  if (/getfluxo-io|@getfluxo|packages\/fengine|packages\/fwk|packages\/fpay|packages\/finfra|JWT_SECRET|INTERNAL_API_KEY/.test(content)) {
     fail(`${path} contains legacy public identifiers`);
   }
 }

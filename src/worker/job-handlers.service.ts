@@ -8,12 +8,16 @@ import { Injectable } from '@nestjs/common';
 import { WorkerJob } from '../types';
 import { getRuntimeConfig } from '../utils/runtime-config';
 import { PaymentProcessRuntimeService } from './payment-process-runtime.service';
+import { ServiceTokenService } from '../auth/service-token.service';
 
 @Injectable()
 export class JobHandlersService {
   private readonly config = getRuntimeConfig();
 
-  constructor(private readonly payments: PaymentProcessRuntimeService) {}
+  constructor(
+    private readonly payments: PaymentProcessRuntimeService,
+    private readonly serviceTokens: ServiceTokenService,
+  ) {}
 
   async handle(job: WorkerJob): Promise<any> {
     switch (job.type) {
@@ -111,10 +115,6 @@ export class JobHandlersService {
   }
 
   private async ledgerCoreEvent(job: WorkerJob) {
-    if (!this.config.internalApiKey) {
-      throw new Error('INTERNAL_API_KEY is required to dispatch ledger-core events');
-    }
-
     const domainEvent = this.extractDomainEvent(job.payload);
     if (domainEvent) {
       return this.ledgerCoreDomainEvent(job, domainEvent);
@@ -124,7 +124,7 @@ export class JobHandlersService {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-internal-api-key': this.config.internalApiKey,
+        authorization: `Bearer ${await this.serviceTokens.forTenant(job.tenant_id)}`,
       },
       body: JSON.stringify({
         job_id: job.id,
@@ -173,7 +173,7 @@ export class JobHandlersService {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-internal-api-key': this.config.internalApiKey,
+        authorization: `Bearer ${await this.serviceTokens.forTenant(job.tenant_id)}`,
       },
       body: JSON.stringify({
         job_id: job.id,

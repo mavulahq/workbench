@@ -27,8 +27,13 @@ jobs:
           --health-cmd "redis-cli ping" --health-interval=10s --health-timeout=5s --health-retries=5
     env:
       REDIS_URL: redis://127.0.0.1:6379
-      INTERNAL_API_KEY: guardian-internal-api-key
-      LEDGER_CORE_URL: http://fengine.test
+      LEDGER_CORE_URL: http://ledger-core.test
+      OIDC_ISSUER: https://identity.example.test
+      OIDC_AUDIENCE: urn:mavula:workbench
+      OIDC_JWKS_URI: https://identity.example.test/jwks
+      OIDC_TOKEN_ENDPOINT: https://identity.example.test/token
+      WORKBENCH_OIDC_CLIENT_ID: workbench-ci
+      WORKBENCH_PRIVATE_JWK_JSON: '{}'
     steps:
       - uses: actions/checkout@v6
       - name: Setup pnpm

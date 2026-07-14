@@ -6,8 +6,9 @@ import { PlatformStatusService } from '../src/status/platform-status.service';
 import { PaymentOutboxPublisherService } from '../src/worker/payment-outbox-publisher.service';
 import { PaymentProcessRuntimeService } from '../src/worker/payment-process-runtime.service';
 import { WorkerService } from '../src/worker/worker.service';
+import { ServiceTokenService } from '../src/auth/service-token.service';
 
-describe('fwk - worker runtime', () => {
+describe('workbench worker runtime', () => {
   let moduleFixture: TestingModule;
   let jobsController: JobsController;
   let statusController: StatusController;
@@ -16,13 +17,15 @@ describe('fwk - worker runtime', () => {
   let worker: WorkerService;
 
   beforeAll(async () => {
-    process.env.FWK_QUEUE_BACKEND = 'memory';
-    process.env.FWK_WORKER_ENABLED = 'false';
-    process.env.FWK_QUEUES = 'payments,platform';
-    process.env.FENGINE_URL = 'http://fengine.test';
-    process.env.INTERNAL_API_KEY = 'test-internal-key';
-    process.env.FENGINE_STATUS_ENABLED = 'false';
-    process.env.FWK_PAYMENT_PROCESS_STORE = 'memory';
+    process.env.WORKBENCH_QUEUE_BACKEND = 'memory';
+    process.env.WORKBENCH_WORKER_ENABLED = 'false';
+    process.env.WORKBENCH_QUEUES = 'payments,platform';
+    process.env.LEDGER_CORE_URL = 'http://ledger-core.test';
+    process.env.OIDC_ISSUER = 'https://identity.mavula.io';
+    process.env.OIDC_AUDIENCE = 'urn:mavula:workbench';
+    process.env.OIDC_JWKS_URI = 'https://identity.mavula.io/jwks';
+    process.env.LEDGER_CORE_STATUS_ENABLED = 'false';
+    process.env.WORKBENCH_PAYMENT_PROCESS_STORE = 'memory';
     process.env.FPAY_SETTLEMENT_OUTBOX_ENABLED = 'true';
     process.env.FPAY_OUTBOX_PUBLISHER_ENABLED = 'false';
 
@@ -36,18 +39,18 @@ describe('fwk - worker runtime', () => {
     paymentOutboxPublisher = moduleFixture.get(PaymentOutboxPublisherService);
     paymentRuntime = moduleFixture.get(PaymentProcessRuntimeService);
     worker = moduleFixture.get(WorkerService);
+    jest.spyOn(moduleFixture.get(ServiceTokenService), 'forTenant').mockResolvedValue('test-service-token');
   });
 
   afterAll(async () => {
     await moduleFixture.close();
-    delete process.env.FWK_QUEUE_BACKEND;
-    delete process.env.FWK_WORKER_ENABLED;
-    delete process.env.FWK_QUEUES;
-    delete process.env.FENGINE_URL;
-    delete process.env.INTERNAL_API_KEY;
-    delete process.env.FENGINE_STATUS_ENABLED;
-    delete process.env.FENGINE_PROJECTION_STATUS_ENABLED;
-    delete process.env.FWK_PAYMENT_PROCESS_STORE;
+    delete process.env.WORKBENCH_QUEUE_BACKEND;
+    delete process.env.WORKBENCH_WORKER_ENABLED;
+    delete process.env.WORKBENCH_QUEUES;
+    delete process.env.LEDGER_CORE_URL;
+    delete process.env.LEDGER_CORE_STATUS_ENABLED;
+    delete process.env.LEDGER_CORE_PROJECTION_STATUS_ENABLED;
+    delete process.env.WORKBENCH_PAYMENT_PROCESS_STORE;
     delete process.env.FPAY_SETTLEMENT_OUTBOX_ENABLED;
     delete process.env.FPAY_OUTBOX_PUBLISHER_ENABLED;
   });
@@ -58,7 +61,7 @@ describe('fwk - worker runtime', () => {
   });
 
   it('enqueues and processes payment jobs', async () => {
-    const job = await jobsController.create({
+    const job = await jobsController.create({ tenantId: 'test_inst_001' }, {
       queue: 'payments',
       type: 'PAYMENT_CAPTURE',
       tenant_id: 'test_inst_001',
@@ -78,7 +81,7 @@ describe('fwk - worker runtime', () => {
   });
 
   it('runs payment reconciliation jobs on the payments queue', async () => {
-    const job = await jobsController.create({
+    const job = await jobsController.create({ tenantId: 'test_inst_001' }, {
       queue: 'payments',
       type: 'PAYMENT_RECONCILIATION',
       tenant_id: 'test_inst_001',
@@ -97,20 +100,20 @@ describe('fwk - worker runtime', () => {
 
   it('rejects unsupported job types', async () => {
     expect(() =>
-      jobsController.create({
+      jobsController.create({ tenantId: 'test_inst_001' }, {
         type: 'UNSUPPORTED_JOB' as any,
         payload: {},
       }),
     ).toThrow('Unsupported job type');
   });
 
-  it('dispatches fengine events through the authenticated callback', async () => {
+  it('dispatches ledger-core events through the authenticated callback', async () => {
     const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,
       status: 200,
       json: async () => ({ accepted: true, executed_workflows: 1 }),
     } as any);
-    const job = await jobsController.create({
+    const job = await jobsController.create({ tenantId: 'test_inst_001' }, {
       queue: 'platform',
       type: 'LEDGER_CORE_EVENT',
       tenant_id: 'test_inst_001',
@@ -123,11 +126,11 @@ describe('fwk - worker runtime', () => {
       result: { accepted: true, executed_workflows: 1 },
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://fengine.test/api/internal/worker/events',
+      'http://ledger-core.test/api/internal/worker/events',
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({
-          'x-internal-api-key': 'test-internal-key',
+          authorization: 'Bearer test-service-token',
         }),
       }),
     );
@@ -165,7 +168,7 @@ describe('fwk - worker runtime', () => {
       },
     };
 
-    const job = await jobsController.create({
+    const job = await jobsController.create({ tenantId: 'test_inst_001' }, {
       queue: 'platform',
       type: 'LEDGER_CORE_EVENT',
       tenant_id: 'test_inst_001',
@@ -178,12 +181,12 @@ describe('fwk - worker runtime', () => {
       result: { accepted: true, event_id: event.event_id },
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://fengine.test/api/internal/worker/domain-events',
+      'http://ledger-core.test/api/internal/worker/domain-events',
       expect.objectContaining({
         method: 'POST',
         body: expect.stringContaining(event.event_id),
         headers: expect.objectContaining({
-          'x-internal-api-key': 'test-internal-key',
+          authorization: 'Bearer test-service-token',
         }),
       }),
     );
@@ -223,7 +226,7 @@ describe('fwk - worker runtime', () => {
       },
     };
 
-    const job = await jobsController.create({
+    const job = await jobsController.create({ tenantId: 'test_inst_001' }, {
       queue: 'platform',
       type: 'LEDGER_CORE_EVENT',
       tenant_id: 'test_inst_001',
@@ -236,12 +239,12 @@ describe('fwk - worker runtime', () => {
       result: { accepted: true, event_id: event.event_id },
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://fengine.test/api/internal/worker/domain-events',
+      'http://ledger-core.test/api/internal/worker/domain-events',
       expect.objectContaining({
         method: 'POST',
         body: expect.stringContaining(event.event_id),
         headers: expect.objectContaining({
-          'x-internal-api-key': 'test-internal-key',
+          authorization: 'Bearer test-service-token',
         }),
       }),
     );
@@ -255,7 +258,7 @@ describe('fwk - worker runtime', () => {
       json: async () => ({ accepted: true, event_id: 'evt_partial' }),
     } as any);
 
-    const job = await jobsController.create({
+    const job = await jobsController.create({ tenantId: 'test_inst_001' }, {
       queue: 'platform',
       type: 'LEDGER_CORE_EVENT',
       tenant_id: 'test_inst_001',
@@ -275,14 +278,14 @@ describe('fwk - worker runtime', () => {
       result: { accepted: true, event_id: 'evt_partial' },
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://fengine.test/api/internal/worker/domain-events',
+      'http://ledger-core.test/api/internal/worker/domain-events',
       expect.objectContaining({
         method: 'POST',
         body: expect.stringContaining('evt_partial'),
       }),
     );
     expect(fetchMock).not.toHaveBeenCalledWith(
-      'http://fengine.test/api/internal/worker/events',
+      'http://ledger-core.test/api/internal/worker/events',
       expect.anything(),
     );
     fetchMock.mockRestore();
@@ -321,7 +324,7 @@ describe('fwk - worker runtime', () => {
       },
     };
 
-    const job = await jobsController.create({
+    const job = await jobsController.create({ tenantId: 'test_inst_001' }, {
       queue: 'platform',
       type: 'LEDGER_CORE_EVENT',
       tenant_id: 'test_inst_001',
@@ -334,7 +337,7 @@ describe('fwk - worker runtime', () => {
       result: { accepted: true, event_id: event.event_id },
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://fengine.test/api/internal/worker/domain-events',
+      'http://ledger-core.test/api/internal/worker/domain-events',
       expect.objectContaining({
         method: 'POST',
         body: expect.stringContaining(event.event_id),
@@ -343,7 +346,7 @@ describe('fwk - worker runtime', () => {
     fetchMock.mockRestore();
   });
 
-  it('publishes payment settlement outbox events to fengine event jobs', async () => {
+  it('publishes payment settlement outbox events to ledger-core event jobs', async () => {
     const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,
       status: 200,
@@ -395,12 +398,12 @@ describe('fwk - worker runtime', () => {
 
     expect(await worker.processOnce()).toBe(1);
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://fengine.test/api/internal/worker/domain-events',
+      'http://ledger-core.test/api/internal/worker/domain-events',
       expect.objectContaining({
         method: 'POST',
         body: expect.stringContaining('payments.settlement_completed'),
         headers: expect.objectContaining({
-          'x-internal-api-key': 'test-internal-key',
+          authorization: 'Bearer test-service-token',
         }),
       }),
     );
@@ -573,8 +576,8 @@ function paymentPayload(idempotencyKey: string, providerReference: string) {
 }
 
 function platformStatusService(): PlatformStatusService {
-  process.env.FENGINE_STATUS_ENABLED = 'true';
-  process.env.FENGINE_PROJECTION_STATUS_ENABLED = 'true';
+  process.env.LEDGER_CORE_STATUS_ENABLED = 'true';
+  process.env.LEDGER_CORE_PROJECTION_STATUS_ENABLED = 'true';
   return new PlatformStatusService(
     { ping: jest.fn(), stats: jest.fn() } as any,
     { status: jest.fn() } as any,
