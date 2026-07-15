@@ -1,0 +1,65 @@
+openapi: 3.1.0
+info:
+  title: MAVULA Workbench API
+  version: 1.0.0
+  description: Authenticated job submission and operational status surface.
+  license: { name: GNU Affero General Public License v3.0 only, identifier: AGPL-3.0-only }
+servers:
+  - url: https://workbench.mavula.dev
+security: [{ bearerAuth: [] }]
+paths:
+  /api/jobs:
+    post:
+      operationId: createJob
+      tags: [Jobs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateJob' }
+      responses:
+        '201': { description: Job accepted }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/jobs/{jobId}:
+    get:
+      operationId: getJob
+      tags: [Jobs]
+      parameters:
+        - { in: path, name: jobId, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Tenant-scoped job status }
+        '404': { description: Job not found }
+  /api/status:
+    get:
+      operationId: getPlatformStatus
+      tags: [Status]
+      responses: { '200': { description: Worker runtime status } }
+  /api/status/queues:
+    get:
+      operationId: getQueueStatus
+      tags: [Status]
+      responses: { '200': { description: Tenant-safe queue status } }
+  /api/status/schedules:
+    get:
+      operationId: getScheduleStatus
+      tags: [Status]
+      responses: { '200': { description: Registered schedules } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    CreateJob:
+      type: object
+      required: [type, payload]
+      properties:
+        type: { type: string }
+        queue: { type: string }
+        payload: { type: object, additionalProperties: true }
+        max_attempts: { type: integer, minimum: 1 }
+        idempotency_key: { type: string }
+  responses:
+    BadRequest: { description: Request contract is invalid }
+    Unauthorized: { description: Bearer token is missing or invalid }
+    Forbidden: { description: Required permission or tenant boundary is not satisfied }

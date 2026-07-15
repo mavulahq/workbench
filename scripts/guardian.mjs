@@ -35,6 +35,8 @@ if (pkg.dependencies?.["@mavula/settlements"] !== "workspace:*") {
   ".github/workflows/guardian.yml",
   "LICENSE",
   "README.md",
+  "contracts/openapi/workbench.public.v1.yaml",
+  "scripts/check-openapi.mjs",
   "src/auth/access-token.guard.ts",
   "src/auth/permissions.guard.ts",
   "src/auth/service-token.service.ts",

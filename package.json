@@ -9,6 +9,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "guardian:check": "node scripts/guardian.mjs",
+    "openapi:check": "node scripts/check-openapi.mjs",
     "start": "node dist/main.js",
     "start:dev": "ts-node-dev --respawn --transpile-only src/main.ts",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest --runInBand",
