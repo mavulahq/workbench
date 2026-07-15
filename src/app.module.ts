@@ -19,15 +19,18 @@ import { WorkerService } from './worker/worker.service';
 import { AccessTokenGuard } from './auth/access-token.guard';
 import { PermissionsGuard } from './auth/permissions.guard';
 import { ServiceTokenService } from './auth/service-token.service';
+import { LegacyBatchesController } from './controllers/legacy-batches.controller';
+import { LegacyBatchRuntimeService } from './worker/legacy-batch-runtime.service';
 
 @Module({
-  controllers: [StatusController, JobsController],
+  controllers: [StatusController, JobsController, LegacyBatchesController],
   providers: [
     JobStoreService,
     PlatformStatusService,
     JobHandlersService,
     PaymentOutboxPublisherService,
     PaymentProcessRuntimeService,
+    LegacyBatchRuntimeService,
     WorkerService,
     SchedulerService,
     WorkerMetricsService,

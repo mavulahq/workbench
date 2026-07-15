@@ -31,6 +31,97 @@ paths:
       responses:
         '200': { description: Tenant-scoped job status }
         '404': { description: Job not found }
+  /api/regulatory-exports:
+    post:
+      operationId: createRegulatoryExport
+      tags: [Legacy interoperability]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { $ref: '#/components/parameters/CorrelationId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateRegulatoryExport' }
+      responses:
+        '201': { description: Durable export receipt, content: { application/json: { schema: { $ref: '#/components/schemas/LegacyBatchReceipt' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { description: Idempotency key or state conflict }
+  /api/legacy-imports:
+    post:
+      operationId: createLegacyImport
+      tags: [Legacy interoperability]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { $ref: '#/components/parameters/CorrelationId' }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties: { file: { type: string, format: binary } }
+      responses:
+        '201': { description: Durable import receipt, content: { application/json: { schema: { $ref: '#/components/schemas/LegacyBatchReceipt' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { description: Idempotency key conflict }
+  /api/legacy-batches:
+    get:
+      operationId: listLegacyBatches
+      tags: [Legacy interoperability]
+      responses:
+        '200':
+          description: Tenant-scoped batch receipts
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/LegacyBatchReceipt' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/legacy-batches/{batchId}:
+    get:
+      operationId: getLegacyBatch
+      tags: [Legacy interoperability]
+      parameters: [{ $ref: '#/components/parameters/BatchId' }]
+      responses:
+        '200': { description: Batch receipt, content: { application/json: { schema: { $ref: '#/components/schemas/LegacyBatchReceipt' } } } }
+        '404': { description: Batch not found }
+  /api/legacy-batches/{batchId}/artifact:
+    get:
+      operationId: downloadLegacyBatchArtifact
+      tags: [Legacy interoperability]
+      parameters: [{ $ref: '#/components/parameters/BatchId' }]
+      responses:
+        '200':
+          description: US-ASCII fixed-width artifact with ETag and server filename
+          headers:
+            ETag: { schema: { type: string } }
+            Content-Disposition: { schema: { type: string } }
+          content: { text/plain: { schema: { type: string, format: binary } } }
+        '404': { description: Batch or artifact not found }
+  /api/legacy-batches/{batchId}/rejections:
+    get:
+      operationId: getLegacyBatchRejections
+      tags: [Legacy interoperability]
+      parameters: [{ $ref: '#/components/parameters/BatchId' }]
+      responses:
+        '200': { description: Deterministic rejection report }
+        '404': { description: Batch not found }
+  /api/regulatory-exports/{batchId}/delivery:
+    post:
+      operationId: recordRegulatoryExportDelivery
+      tags: [Legacy interoperability]
+      parameters:
+        - { $ref: '#/components/parameters/BatchId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { $ref: '#/components/parameters/CorrelationId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecordExportDelivery' }
+      responses:
+        '201': { description: Export receipt in DELIVERED state, content: { application/json: { schema: { $ref: '#/components/schemas/LegacyBatchReceipt' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { description: Delivery state or reference conflict }
   /api/status:
     get:
       operationId: getPlatformStatus
@@ -49,6 +140,10 @@ paths:
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    BatchId: { in: path, name: batchId, required: true, schema: { type: string, format: uuid } }
+    IdempotencyKey: { in: header, name: Idempotency-Key, required: true, schema: { type: string, minLength: 1, maxLength: 255 } }
+    CorrelationId: { in: header, name: X-Correlation-ID, required: true, schema: { type: string, minLength: 1, maxLength: 128 } }
   schemas:
     CreateJob:
       type: object
@@ -59,6 +154,45 @@ components:
         payload: { type: object, additionalProperties: true }
         max_attempts: { type: integer, minimum: 1 }
         idempotency_key: { type: string }
+    CreateRegulatoryExport:
+      type: object
+      additionalProperties: false
+      required: [period_from, period_to, legal_basis_code, retention_until]
+      properties:
+        period_from: { type: string, format: date }
+        period_to: { type: string, format: date }
+        generated_at: { type: string, format: date-time }
+        legal_basis_code: { type: string, minLength: 1, maxLength: 64 }
+        retention_until: { type: string, format: date }
+    RecordExportDelivery:
+      type: object
+      additionalProperties: false
+      required: [authority_reference]
+      properties:
+        authority_reference: { type: string, minLength: 1, maxLength: 255 }
+        delivered_at: { type: string, format: date-time }
+    LegacyBatchReceipt:
+      type: object
+      required: [id, tenant_id, institution_id, direction, contract_id, state, correlation_id, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string }
+        institution_id: { type: string }
+        direction: { type: string, enum: [EXPORT, IMPORT] }
+        contract_id: { type: string, const: 'legacy.regulatory_transaction_export@1' }
+        state: { type: string, enum: [QUEUED, PROCESSING, GENERATED, VALIDATED, REJECTED, FAILED, DELIVERED] }
+        correlation_id: { type: string }
+        source_count: { type: integer, minimum: 0 }
+        record_count: { type: integer, minimum: 0 }
+        total_amount_minor: { type: string, pattern: '^[0-9]+$' }
+        content_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        attempts: { type: integer, minimum: 0 }
+        max_attempts: { type: integer, minimum: 1 }
+        delivered_at: { type: string, format: date-time }
+        authority_reference: { type: string }
+        failure_reason: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
   responses:
     BadRequest: { description: Request contract is invalid }
     Unauthorized: { description: Bearer token is missing or invalid }

@@ -44,6 +44,7 @@ export class StatusController {
   }
 
   @Get('metrics')
+  @Public()
   @RequirePermissions('observability.read')
   @Header('Content-Type', 'text/plain; version=0.0.4')
   prometheusMetrics() {
