@@ -13,4 +13,16 @@ const expected = [
 ];
 for (const route of expected) if (!paths.has(route)) throw new Error(`OpenAPI route missing: ${route}`);
 for (const route of paths) if (/health|metrics|internal/.test(route)) throw new Error(`Operational or internal route exposed: ${route}`);
+const operationIds = [...source.matchAll(/^\s{6}operationId: (\S+)$/gm)].map((match) => match[1]);
+const summaries = [...source.matchAll(/^\s{6}summary: .+$/gm)];
+const permissions = [...source.matchAll(/^\s{6}x-mavula-permissions:/gm)];
+if (operationIds.length !== 12 || new Set(operationIds).size !== operationIds.length) {
+  throw new Error('Workbench OpenAPI operationId coverage is incomplete or duplicated');
+}
+if (summaries.length !== operationIds.length || permissions.length !== operationIds.length) {
+  throw new Error('Every Workbench operation must declare summary and permission metadata');
+}
+for (const schema of ['CreateJob', 'WorkerJob', 'LegacyBatchReceipt', 'LegacyRejectionReport', 'PlatformStatus']) {
+  if (!source.includes(`    ${schema}:`)) throw new Error(`OpenAPI schema missing: ${schema}`);
+}
 console.log(`workbench OpenAPI covers ${paths.size} public routes`);
