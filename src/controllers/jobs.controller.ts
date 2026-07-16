@@ -4,20 +4,27 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { BadRequestException, Body, Controller, Get, NotFoundException, Param, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, ForbiddenException, Get, NotFoundException, Param, Post, Req } from '@nestjs/common';
 import { JobStoreService } from '../queue/job-store.service';
 import { CreateJobInput, JOB_TYPES, JobType } from '../types';
+import { RequirePermissions } from '../auth/permissions.decorator';
+import { CreateJobV1Dto } from '../dto/create-job-v1.dto';
 
 @Controller('jobs')
 export class JobsController {
   constructor(private readonly store: JobStoreService) {}
 
   @Post()
-  create(@Body() body: CreateJobInput) {
-    return this.store.enqueue(this.validateCreateJob(body));
+  @RequirePermissions('workbench.jobs.write')
+  create(@Req() req: any, @Body() body: CreateJobV1Dto) {
+    if (body.tenant_id && body.tenant_id !== req.tenantId) {
+      throw new ForbiddenException('tenant_id does not match the authenticated tenant');
+    }
+    return this.store.enqueue(this.validateCreateJob({ ...body, tenant_id: req.tenantId }));
   }
 
   @Get(':jobId')
+  @RequirePermissions('workbench.read')
   async get(@Param('jobId') jobId: string) {
     const job = await this.store.get(jobId);
     if (!job) {
@@ -47,7 +54,7 @@ export class JobsController {
       ...body,
       type: body.type,
       queue: body.queue || 'payments',
-      tenant_id: body.tenant_id || 'public',
+      tenant_id: body.tenant_id!,
       payload: body.payload || {},
       max_attempts: body.max_attempts ? Number(body.max_attempts) : 3,
     };

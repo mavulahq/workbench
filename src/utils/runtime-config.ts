@@ -23,7 +23,8 @@ function numberEnv(name: string, legacyName: string, defaultValue: number): numb
 
 export function getRuntimeConfig() {
   const ledgerCoreUrl = env('LEDGER_CORE_URL', env('FENGINE_URL', 'http://localhost:3000'))!.replace(/\/$/, '');
-  const queues = env('WORKBENCH_QUEUES', env('FWK_QUEUES', 'payments,platform'))!
+  const databaseUrl = process.env.DATABASE_URL || 'postgresql://mavula:mavula_dev@localhost:15432/mavula?schema=public';
+  const queues = env('WORKBENCH_QUEUES', env('FWK_QUEUES', 'payments,platform,legacy'))!
     .split(',')
     .map((queue) => queue.trim())
     .filter(Boolean);
@@ -33,10 +34,18 @@ export function getRuntimeConfig() {
     version: process.env.npm_package_version || '0.1.0',
     port: Number(process.env.PORT || 3010),
     redisUrl: process.env.REDIS_URL || 'redis://localhost:16379',
-    databaseUrl: process.env.DATABASE_URL || 'postgresql://mavula:mavula_dev@localhost:15432/mavula?schema=public',
+    databaseUrl,
+    legacyConnectorsDatabaseUrl: env('LEGACY_CONNECTORS_DATABASE_URL', databaseUrl)!,
+    legacyBatchStore: env('WORKBENCH_LEGACY_BATCH_STORE', 'postgres')!,
     ledgerCoreUrl,
     fengineUrl: ledgerCoreUrl,
-    internalApiKey: process.env.INTERNAL_API_KEY || '',
+    oidcIssuer: process.env.OIDC_ISSUER || '',
+    oidcAudience: process.env.OIDC_AUDIENCE || '',
+    oidcJwksUri: process.env.OIDC_JWKS_URI || '',
+    oidcTokenEndpoint: process.env.OIDC_TOKEN_ENDPOINT || '',
+    oidcClientId: process.env.WORKBENCH_OIDC_CLIENT_ID || '',
+    oidcPrivateJwk: process.env.WORKBENCH_PRIVATE_JWK_JSON || '',
+    ledgerCoreAudience: process.env.LEDGER_CORE_AUDIENCE || 'urn:mavula:ledger-core',
     internalRequestTimeoutMs: Number(process.env.INTERNAL_REQUEST_TIMEOUT_MS || 10000),
     paymentProcessStore: env('WORKBENCH_PAYMENT_PROCESS_STORE', env('FWK_PAYMENT_PROCESS_STORE', 'postgres'))!,
     paymentSettlementOutboxEnabled: env('SETTLEMENTS_OUTBOX_ENABLED', env('FPAY_SETTLEMENT_OUTBOX_ENABLED')) === 'true',

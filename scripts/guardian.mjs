@@ -28,6 +28,9 @@ if (pkg.license !== "AGPL-3.0-only") fail("workbench must remain AGPL-3.0-only")
 if (pkg.dependencies?.["@mavula/settlements"] !== "workspace:*") {
   fail("workbench must depend on @mavula/settlements through the workspace");
 }
+if (pkg.dependencies?.["@mavula/legacy-connectors"] !== "workspace:*") {
+  fail("workbench must depend on @mavula/legacy-connectors through the workspace");
+}
 
 [
   ".github/CODEOWNERS",
@@ -35,10 +38,23 @@ if (pkg.dependencies?.["@mavula/settlements"] !== "workspace:*") {
   ".github/workflows/guardian.yml",
   "LICENSE",
   "README.md",
+  "contracts/openapi/workbench.public.v1.yaml",
+  "scripts/check-openapi.mjs",
+  "src/auth/access-token.guard.ts",
+  "src/auth/permissions.guard.ts",
+  "src/auth/service-token.service.ts",
+  "src/controllers/legacy-batches.controller.ts",
+  "src/worker/legacy-batch-runtime.service.ts",
+  "Dockerfile",
   "jest.config.js",
   "jest.e2e.config.js",
   "tsconfig.json",
 ].forEach(requireFile);
+
+const dockerfile = read("Dockerfile");
+if (!dockerfile.includes("packages/legacy-connectors/contracts")) {
+  fail("workbench runtime image must include legacy connector contracts");
+}
 
 if (!/SPDX-License-Identifier: AGPL-3\.0-only/.test(read("LICENSE"))) {
   fail("LICENSE must declare AGPL SPDX");
@@ -50,13 +66,14 @@ if (!/@mavula\/workbench/.test(read("README.md"))) {
 const tracked = spawnSync("git", ["ls-files"], { encoding: "utf8" });
 if (tracked.status !== 0) fail("git ls-files failed");
 for (const file of tracked.stdout.split("\n").filter(Boolean)) {
+  if (!existsSync(file)) continue;
   if (/(^|\/)\.env($|\.(?!example$))/.test(file)) fail(`${file} must not be tracked`);
 }
 
 for (const path of ["package.json", "README.md", ".github/CODEOWNERS"]) {
   if (path === "scripts/guardian.mjs") continue;
   const content = read(path);
-  if (/getfluxo-io|@getfluxo|packages\/fengine|packages\/fwk|packages\/fpay|packages\/finfra/.test(content)) {
+  if (/getfluxo-io|@getfluxo|packages\/fengine|packages\/fwk|packages\/fpay|packages\/finfra|JWT_SECRET|INTERNAL_API_KEY/.test(content)) {
     fail(`${path} contains legacy public identifiers`);
   }
 }

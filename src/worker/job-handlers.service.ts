@@ -8,12 +8,23 @@ import { Injectable } from '@nestjs/common';
 import { WorkerJob } from '../types';
 import { getRuntimeConfig } from '../utils/runtime-config';
 import { PaymentProcessRuntimeService } from './payment-process-runtime.service';
+import { ServiceTokenService } from '../auth/service-token.service';
+import { LegacyBatchRuntimeService } from './legacy-batch-runtime.service';
+import {
+  LegacyBatchSourceRejectedError,
+  MAX_LEGACY_BATCH_RECORDS,
+  type RegulatoryTransactionRecord,
+} from '@mavula/legacy-connectors';
 
 @Injectable()
 export class JobHandlersService {
   private readonly config = getRuntimeConfig();
 
-  constructor(private readonly payments: PaymentProcessRuntimeService) {}
+  constructor(
+    private readonly payments: PaymentProcessRuntimeService,
+    private readonly serviceTokens: ServiceTokenService,
+    private readonly legacyBatches: LegacyBatchRuntimeService,
+  ) {}
 
   async handle(job: WorkerJob): Promise<any> {
     switch (job.type) {
@@ -26,6 +37,10 @@ export class JobHandlersService {
         return this.recordPaymentSettlement(job);
       case 'PAYMENT_RECONCILIATION':
         return this.reconcilePayments(job);
+      case 'LEGACY_EXPORT':
+        return this.processLegacyExport(job);
+      case 'LEGACY_IMPORT':
+        return this.processLegacyImport(job);
       case 'LEDGER_CORE_EVENT':
       case 'FENGINE_EVENT':
         return this.ledgerCoreEvent(job);
@@ -110,11 +125,56 @@ export class JobHandlersService {
     return value;
   }
 
-  private async ledgerCoreEvent(job: WorkerJob) {
-    if (!this.config.internalApiKey) {
-      throw new Error('INTERNAL_API_KEY is required to dispatch ledger-core events');
-    }
+  private async processLegacyExport(job: WorkerJob) {
+    const batchId = this.requiredString(job.payload.batch_id, 'batch_id');
+    const receipt = await this.legacyBatches.getManager().get(job.tenant_id, batchId);
+    if (!receipt) throw new Error('LEGACY_BATCH_NOT_FOUND');
+    const request = receipt.request as Record<string, string>;
+    const result = await this.legacyBatches.getManager().processExport(job.tenant_id, batchId, async () => {
+      const records: RegulatoryTransactionRecord[] = [];
+      let cursor: string | undefined;
+      do {
+        const response = await fetch(`${this.config.ledgerCoreUrl}/api/internal/worker/regulatory-transaction-records`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${await this.serviceTokens.forTenant(job.tenant_id)}`,
+          },
+          body: JSON.stringify({
+            tenant_id: job.tenant_id, institution_id: receipt.institution_id,
+            period_from: request.period_from, period_to: request.period_to,
+            legal_basis_code: request.legal_basis_code, retention_until: request.retention_until,
+            cursor, limit: 500,
+          }),
+          signal: AbortSignal.timeout(this.config.internalRequestTimeoutMs),
+        });
+        const body = await response.json().catch(() => ({})) as any;
+        if (!response.ok) throw new Error(`ledger-core regulatory source failed (${response.status})`);
+        if (!Array.isArray(body.records) || !Array.isArray(body.rejections)) throw new Error('ledger-core regulatory source returned an invalid response');
+        if (body.rejections.length) {
+          throw new LegacyBatchSourceRejectedError(body.rejections.map((item: any, index: number) => ({
+            record: records.length + index + 1,
+            field: String(item.field || 'record'),
+            code: String(item.code || 'SOURCE_RECORD_REJECTED'),
+            reference: String(item.transaction_id || ''),
+          })), records.length + body.records.length + body.rejections.length);
+        }
+        records.push(...body.records);
+        if (records.length > MAX_LEGACY_BATCH_RECORDS) throw new Error('LEGACY_BATCH_RECORD_LIMIT_EXCEEDED');
+        cursor = typeof body.next_cursor === 'string' ? body.next_cursor : undefined;
+      } while (cursor);
+      return records;
+    });
+    return { accepted: true, batch_id: result.id, state: result.state, record_count: result.record_count };
+  }
 
+  private async processLegacyImport(job: WorkerJob) {
+    const batchId = this.requiredString(job.payload.batch_id, 'batch_id');
+    const result = await this.legacyBatches.getManager().processImport(job.tenant_id, batchId);
+    return { accepted: true, batch_id: result.id, state: result.state, record_count: result.record_count };
+  }
+
+  private async ledgerCoreEvent(job: WorkerJob) {
     const domainEvent = this.extractDomainEvent(job.payload);
     if (domainEvent) {
       return this.ledgerCoreDomainEvent(job, domainEvent);
@@ -124,7 +184,7 @@ export class JobHandlersService {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-internal-api-key': this.config.internalApiKey,
+        authorization: `Bearer ${await this.serviceTokens.forTenant(job.tenant_id)}`,
       },
       body: JSON.stringify({
         job_id: job.id,
@@ -169,15 +229,20 @@ export class JobHandlersService {
   }
 
   private async ledgerCoreDomainEvent(job: WorkerJob, event: Record<string, any>) {
+    const eventTenantId = event.tenant_id || job.tenant_id;
+    if (eventTenantId !== job.tenant_id) {
+      throw new Error('domain event tenant does not match the worker job tenant');
+    }
+    const scopedEvent = { ...event, tenant_id: eventTenantId };
     const response = await fetch(`${this.config.fengineUrl}/api/internal/worker/domain-events`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-internal-api-key': this.config.internalApiKey,
+        authorization: `Bearer ${await this.serviceTokens.forTenant(job.tenant_id)}`,
       },
       body: JSON.stringify({
         job_id: job.id,
-        event,
+        event: scopedEvent,
       }),
       signal: AbortSignal.timeout(this.config.internalRequestTimeoutMs),
     });

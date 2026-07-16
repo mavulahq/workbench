@@ -6,23 +6,32 @@ import { PlatformStatusService } from '../src/status/platform-status.service';
 import { PaymentOutboxPublisherService } from '../src/worker/payment-outbox-publisher.service';
 import { PaymentProcessRuntimeService } from '../src/worker/payment-process-runtime.service';
 import { WorkerService } from '../src/worker/worker.service';
+import { ServiceTokenService } from '../src/auth/service-token.service';
+import { LegacyBatchesController } from '../src/controllers/legacy-batches.controller';
+import { LegacyBatchRuntimeService } from '../src/worker/legacy-batch-runtime.service';
+import { readFileSync } from 'node:fs';
 
-describe('fwk - worker runtime', () => {
+describe('workbench worker runtime', () => {
   let moduleFixture: TestingModule;
   let jobsController: JobsController;
   let statusController: StatusController;
   let paymentOutboxPublisher: PaymentOutboxPublisherService;
   let paymentRuntime: PaymentProcessRuntimeService;
   let worker: WorkerService;
+  let legacyBatchesController: LegacyBatchesController;
+  let legacyBatchRuntime: LegacyBatchRuntimeService;
 
   beforeAll(async () => {
-    process.env.FWK_QUEUE_BACKEND = 'memory';
-    process.env.FWK_WORKER_ENABLED = 'false';
-    process.env.FWK_QUEUES = 'payments,platform';
-    process.env.FENGINE_URL = 'http://fengine.test';
-    process.env.INTERNAL_API_KEY = 'test-internal-key';
-    process.env.FENGINE_STATUS_ENABLED = 'false';
-    process.env.FWK_PAYMENT_PROCESS_STORE = 'memory';
+    process.env.WORKBENCH_QUEUE_BACKEND = 'memory';
+    process.env.WORKBENCH_WORKER_ENABLED = 'false';
+    process.env.WORKBENCH_QUEUES = 'payments,platform,legacy';
+    process.env.LEDGER_CORE_URL = 'http://ledger-core.test';
+    process.env.OIDC_ISSUER = 'https://identity.mavula.io';
+    process.env.OIDC_AUDIENCE = 'urn:mavula:workbench';
+    process.env.OIDC_JWKS_URI = 'https://identity.mavula.io/jwks';
+    process.env.LEDGER_CORE_STATUS_ENABLED = 'false';
+    process.env.WORKBENCH_PAYMENT_PROCESS_STORE = 'memory';
+    process.env.WORKBENCH_LEGACY_BATCH_STORE = 'memory';
     process.env.FPAY_SETTLEMENT_OUTBOX_ENABLED = 'true';
     process.env.FPAY_OUTBOX_PUBLISHER_ENABLED = 'false';
 
@@ -36,18 +45,21 @@ describe('fwk - worker runtime', () => {
     paymentOutboxPublisher = moduleFixture.get(PaymentOutboxPublisherService);
     paymentRuntime = moduleFixture.get(PaymentProcessRuntimeService);
     worker = moduleFixture.get(WorkerService);
+    legacyBatchesController = moduleFixture.get(LegacyBatchesController);
+    legacyBatchRuntime = moduleFixture.get(LegacyBatchRuntimeService);
+    jest.spyOn(moduleFixture.get(ServiceTokenService), 'forTenant').mockResolvedValue('test-service-token');
   });
 
   afterAll(async () => {
     await moduleFixture.close();
-    delete process.env.FWK_QUEUE_BACKEND;
-    delete process.env.FWK_WORKER_ENABLED;
-    delete process.env.FWK_QUEUES;
-    delete process.env.FENGINE_URL;
-    delete process.env.INTERNAL_API_KEY;
-    delete process.env.FENGINE_STATUS_ENABLED;
-    delete process.env.FENGINE_PROJECTION_STATUS_ENABLED;
-    delete process.env.FWK_PAYMENT_PROCESS_STORE;
+    delete process.env.WORKBENCH_QUEUE_BACKEND;
+    delete process.env.WORKBENCH_WORKER_ENABLED;
+    delete process.env.WORKBENCH_QUEUES;
+    delete process.env.LEDGER_CORE_URL;
+    delete process.env.LEDGER_CORE_STATUS_ENABLED;
+    delete process.env.LEDGER_CORE_PROJECTION_STATUS_ENABLED;
+    delete process.env.WORKBENCH_PAYMENT_PROCESS_STORE;
+    delete process.env.WORKBENCH_LEGACY_BATCH_STORE;
     delete process.env.FPAY_SETTLEMENT_OUTBOX_ENABLED;
     delete process.env.FPAY_OUTBOX_PUBLISHER_ENABLED;
   });
@@ -58,7 +70,7 @@ describe('fwk - worker runtime', () => {
   });
 
   it('enqueues and processes payment jobs', async () => {
-    const job = await jobsController.create({
+    const job = await jobsController.create({ tenantId: 'test_inst_001' }, {
       queue: 'payments',
       type: 'PAYMENT_CAPTURE',
       tenant_id: 'test_inst_001',
@@ -78,7 +90,7 @@ describe('fwk - worker runtime', () => {
   });
 
   it('runs payment reconciliation jobs on the payments queue', async () => {
-    const job = await jobsController.create({
+    const job = await jobsController.create({ tenantId: 'test_inst_001' }, {
       queue: 'payments',
       type: 'PAYMENT_RECONCILIATION',
       tenant_id: 'test_inst_001',
@@ -95,22 +107,95 @@ describe('fwk - worker runtime', () => {
     });
   });
 
+  it('generates a regulatory export through the legacy queue', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ records: [{
+        record_id: 'regtxn_001', transaction_id: 'txn_001', transaction_type: 'LOAN_PAYMENT',
+        instruction_method: 'BATCH', source_party_id: 'customer_001', source_account_id: 'account_001',
+        destination_party_id: 'institution_001', destination_account_id: 'loan_001',
+        counterparty_id: 'institution_001', amount_minor: '120000', currency: 'MZN',
+        occurred_at: '2026-07-15T10:00:00.000Z', recorded_at: '2026-07-15T10:00:01.000Z',
+        correlation_id: 'corr_txn_001', retention_until: '2036-07-15', legal_basis_code: 'MZ-AML-14-2023-ART-43',
+      }], rejections: [] }),
+    } as any);
+    const request = { tenantId: 'tenant_legacy_001', institutionId: 'institution_001', identity: { sub: 'compliance_001' } };
+    const receipt = await legacyBatchesController.requestExport(request, 'idem-export-001', 'corr-export-001', {
+      period_from: '2026-07-01', period_to: '2026-07-31', generated_at: '2026-08-01T08:00:00.000Z',
+      legal_basis_code: 'MZ-AML-14-2023-ART-43', retention_until: '2036-07-31',
+    });
+    const replay = await legacyBatchesController.requestExport(request, 'idem-export-001', 'corr-export-001', {
+      period_from: '2026-07-01', period_to: '2026-07-31', generated_at: '2026-08-01T08:00:00.000Z',
+      legal_basis_code: 'MZ-AML-14-2023-ART-43', retention_until: '2036-07-31',
+    });
+    expect(replay.id).toBe(receipt.id);
+    expect(receipt).not.toHaveProperty('idempotency_key_digest');
+    expect((await statusController.queues()).find((queue: any) => queue.queue === 'legacy')).toMatchObject({ queued: 1, total: 1 });
+
+    expect(await worker.processOnce()).toBe(1);
+    await expect(legacyBatchRuntime.getManager().get(request.tenantId, receipt.id)).resolves.toMatchObject({
+      state: 'GENERATED', record_count: 1,
+    });
+    await expect(legacyBatchRuntime.getManager().getArtifact(request.tenantId, receipt.id)).resolves.toMatchObject({
+      media_type: 'text/plain', byte_length: expect.any(Number),
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://ledger-core.test/api/internal/worker/regulatory-transaction-records',
+      expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ authorization: 'Bearer test-service-token' }) }),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    fetchMock.mockRestore();
+  });
+
+  it('persists ledger source mapping failures as batch rejections', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true, status: 200, json: async () => ({ records: [], rejections: [{
+        transaction_id: 'txn_incomplete', field: 'destination_account_id', code: 'REQUIRED_SOURCE_FIELD_MISSING',
+      }] }),
+    } as any);
+    const request = { tenantId: 'tenant_legacy_rejected', institutionId: 'institution_rejected', identity: { sub: 'compliance_rejected' } };
+    const receipt = await legacyBatchesController.requestExport(request, 'idem-export-rejected', 'corr-export-rejected', {
+      period_from: '2026-07-01', period_to: '2026-07-31', generated_at: '2026-08-01T08:00:00.000Z',
+      legal_basis_code: 'MZ-AML-14-2023-ART-43', retention_until: '2036-07-31',
+    });
+    expect(await worker.processOnce()).toBe(1);
+    await expect(legacyBatchRuntime.getManager().get(request.tenantId, receipt.id)).resolves.toMatchObject({
+      state: 'REJECTED', attempts: 1,
+      rejection_report: [{ field: 'destination_account_id', code: 'REQUIRED_SOURCE_FIELD_MISSING', reference: 'txn_incomplete' }],
+    });
+    fetchMock.mockRestore();
+  });
+
+  it('stages and validates an imported artifact without a ledger callback', async () => {
+    const fixture = readFileSync('../legacy-connectors/contracts/regulatory-transaction-export/v1/examples/regulatory-transaction-export.v1.dat');
+    const request = { tenantId: 'tenant_legacy_002', institutionId: 'institution_002', identity: { sub: 'compliance_002' } };
+    const receipt = await legacyBatchesController.stageImport(
+      request, 'idem-import-001', 'corr-import-001',
+      { originalname: 'incoming.dat', buffer: fixture } as Express.Multer.File,
+    );
+    expect(await worker.processOnce()).toBe(1);
+    await expect(legacyBatchRuntime.getManager().get(request.tenantId, receipt.id)).resolves.toMatchObject({
+      state: 'VALIDATED', record_count: 1,
+    });
+  });
+
   it('rejects unsupported job types', async () => {
     expect(() =>
-      jobsController.create({
+      jobsController.create({ tenantId: 'test_inst_001' }, {
         type: 'UNSUPPORTED_JOB' as any,
         payload: {},
       }),
     ).toThrow('Unsupported job type');
   });
 
-  it('dispatches fengine events through the authenticated callback', async () => {
+  it('dispatches ledger-core events through the authenticated callback', async () => {
     const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,
       status: 200,
       json: async () => ({ accepted: true, executed_workflows: 1 }),
     } as any);
-    const job = await jobsController.create({
+    const job = await jobsController.create({ tenantId: 'test_inst_001' }, {
       queue: 'platform',
       type: 'LEDGER_CORE_EVENT',
       tenant_id: 'test_inst_001',
@@ -123,11 +208,11 @@ describe('fwk - worker runtime', () => {
       result: { accepted: true, executed_workflows: 1 },
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://fengine.test/api/internal/worker/events',
+      'http://ledger-core.test/api/internal/worker/events',
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({
-          'x-internal-api-key': 'test-internal-key',
+          authorization: 'Bearer test-service-token',
         }),
       }),
     );
@@ -165,7 +250,7 @@ describe('fwk - worker runtime', () => {
       },
     };
 
-    const job = await jobsController.create({
+    const job = await jobsController.create({ tenantId: 'test_inst_001' }, {
       queue: 'platform',
       type: 'LEDGER_CORE_EVENT',
       tenant_id: 'test_inst_001',
@@ -178,12 +263,12 @@ describe('fwk - worker runtime', () => {
       result: { accepted: true, event_id: event.event_id },
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://fengine.test/api/internal/worker/domain-events',
+      'http://ledger-core.test/api/internal/worker/domain-events',
       expect.objectContaining({
         method: 'POST',
         body: expect.stringContaining(event.event_id),
         headers: expect.objectContaining({
-          'x-internal-api-key': 'test-internal-key',
+          authorization: 'Bearer test-service-token',
         }),
       }),
     );
@@ -223,7 +308,7 @@ describe('fwk - worker runtime', () => {
       },
     };
 
-    const job = await jobsController.create({
+    const job = await jobsController.create({ tenantId: 'test_inst_001' }, {
       queue: 'platform',
       type: 'LEDGER_CORE_EVENT',
       tenant_id: 'test_inst_001',
@@ -236,12 +321,12 @@ describe('fwk - worker runtime', () => {
       result: { accepted: true, event_id: event.event_id },
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://fengine.test/api/internal/worker/domain-events',
+      'http://ledger-core.test/api/internal/worker/domain-events',
       expect.objectContaining({
         method: 'POST',
         body: expect.stringContaining(event.event_id),
         headers: expect.objectContaining({
-          'x-internal-api-key': 'test-internal-key',
+          authorization: 'Bearer test-service-token',
         }),
       }),
     );
@@ -255,10 +340,11 @@ describe('fwk - worker runtime', () => {
       json: async () => ({ accepted: true, event_id: 'evt_partial' }),
     } as any);
 
-    const job = await jobsController.create({
+    const job = await jobsController.create({ tenantId: 'test_inst_001' }, {
       queue: 'platform',
       type: 'LEDGER_CORE_EVENT',
       tenant_id: 'test_inst_001',
+      max_attempts: 1,
       payload: {
         domain_event: true,
         event_type: 'lending.payment_posted',
@@ -275,14 +361,14 @@ describe('fwk - worker runtime', () => {
       result: { accepted: true, event_id: 'evt_partial' },
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://fengine.test/api/internal/worker/domain-events',
+      'http://ledger-core.test/api/internal/worker/domain-events',
       expect.objectContaining({
         method: 'POST',
         body: expect.stringContaining('evt_partial'),
       }),
     );
     expect(fetchMock).not.toHaveBeenCalledWith(
-      'http://fengine.test/api/internal/worker/events',
+      'http://ledger-core.test/api/internal/worker/events',
       expect.anything(),
     );
     fetchMock.mockRestore();
@@ -321,7 +407,7 @@ describe('fwk - worker runtime', () => {
       },
     };
 
-    const job = await jobsController.create({
+    const job = await jobsController.create({ tenantId: 'test_inst_001' }, {
       queue: 'platform',
       type: 'LEDGER_CORE_EVENT',
       tenant_id: 'test_inst_001',
@@ -334,7 +420,7 @@ describe('fwk - worker runtime', () => {
       result: { accepted: true, event_id: event.event_id },
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://fengine.test/api/internal/worker/domain-events',
+      'http://ledger-core.test/api/internal/worker/domain-events',
       expect.objectContaining({
         method: 'POST',
         body: expect.stringContaining(event.event_id),
@@ -343,7 +429,41 @@ describe('fwk - worker runtime', () => {
     fetchMock.mockRestore();
   });
 
-  it('publishes payment settlement outbox events to fengine event jobs', async () => {
+  it('rejects a domain event from another tenant before requesting a service token', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch');
+    const serviceTokens = moduleFixture.get(ServiceTokenService);
+    const tokenMock = jest.spyOn(serviceTokens, 'forTenant');
+    tokenMock.mockClear();
+    const job = await jobsController.create({ tenantId: 'test_inst_001' }, {
+      queue: 'platform',
+      type: 'LEDGER_CORE_EVENT',
+      tenant_id: 'test_inst_001',
+      max_attempts: 1,
+      payload: {
+        event_id: 'evt_cross_tenant',
+        event_type: 'ledger.journal_posted',
+        event_version: 1,
+        occurred_at: '2026-07-14T00:00:00.000Z',
+        tenant_id: 'test_inst_002',
+        aggregate: { type: 'journal_entry', id: 'entry-1', version: 1 },
+        correlation_id: 'corr-cross-tenant',
+        causation_id: 'cmd-cross-tenant',
+        payload: {},
+        metadata: {},
+      },
+    });
+
+    expect(await worker.processOnce()).toBe(1);
+    await expect(jobsController.get(job.id)).resolves.toMatchObject({
+      status: 'FAILED',
+      last_error: 'domain event tenant does not match the worker job tenant',
+    });
+    expect(tokenMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+
+  it('publishes payment settlement outbox events to ledger-core event jobs', async () => {
     const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,
       status: 200,
@@ -395,12 +515,12 @@ describe('fwk - worker runtime', () => {
 
     expect(await worker.processOnce()).toBe(1);
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://fengine.test/api/internal/worker/domain-events',
+      'http://ledger-core.test/api/internal/worker/domain-events',
       expect.objectContaining({
         method: 'POST',
         body: expect.stringContaining('payments.settlement_completed'),
         headers: expect.objectContaining({
-          'x-internal-api-key': 'test-internal-key',
+          authorization: 'Bearer test-service-token',
         }),
       }),
     );
@@ -427,6 +547,9 @@ describe('fwk - worker runtime', () => {
       outbox_publishing: expect.any(Number),
       outbox_published: expect.any(Number),
       outbox_failed: expect.any(Number),
+    });
+    expect(metrics.legacy_batches).toMatchObject({
+      generated: expect.any(Number), validated: expect.any(Number), rejected: expect.any(Number), failed: expect.any(Number),
     });
   });
 
@@ -573,8 +696,8 @@ function paymentPayload(idempotencyKey: string, providerReference: string) {
 }
 
 function platformStatusService(): PlatformStatusService {
-  process.env.FENGINE_STATUS_ENABLED = 'true';
-  process.env.FENGINE_PROJECTION_STATUS_ENABLED = 'true';
+  process.env.LEDGER_CORE_STATUS_ENABLED = 'true';
+  process.env.LEDGER_CORE_PROJECTION_STATUS_ENABLED = 'true';
   return new PlatformStatusService(
     { ping: jest.fn(), stats: jest.fn() } as any,
     { status: jest.fn() } as any,
