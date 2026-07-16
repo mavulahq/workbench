@@ -11,6 +11,8 @@ export const JOB_TYPES = [
   'PAYMENT_SETTLEMENT',
   'PAYMENT_DISBURSEMENT',
   'PAYMENT_RECONCILIATION',
+  'LEGACY_EXPORT',
+  'LEGACY_IMPORT',
   'LEDGER_CORE_EVENT',
   'FENGINE_EVENT',
   'PLATFORM_HEALTH_CHECK',
@@ -37,6 +39,7 @@ export interface WorkerJob {
 }
 
 export interface CreateJobInput {
+  job_id?: string;
   queue?: string;
   type: JobType;
   tenant_id?: string;
@@ -96,6 +99,16 @@ export interface WorkerHealthMetrics {
     outbox_publishing: number;
     outbox_published: number;
     outbox_failed: number;
+  };
+  legacy_batches?: {
+    queued: number;
+    processing: number;
+    generated: number;
+    validated: number;
+    rejected: number;
+    failed: number;
+    delivered: number;
+    rejection_records: number;
   };
   last_heartbeat?: string;
   last_error?: string;

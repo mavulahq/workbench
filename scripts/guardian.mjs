@@ -28,6 +28,9 @@ if (pkg.license !== "AGPL-3.0-only") fail("workbench must remain AGPL-3.0-only")
 if (pkg.dependencies?.["@mavula/settlements"] !== "workspace:*") {
   fail("workbench must depend on @mavula/settlements through the workspace");
 }
+if (pkg.dependencies?.["@mavula/legacy-connectors"] !== "workspace:*") {
+  fail("workbench must depend on @mavula/legacy-connectors through the workspace");
+}
 
 [
   ".github/CODEOWNERS",
@@ -35,13 +38,23 @@ if (pkg.dependencies?.["@mavula/settlements"] !== "workspace:*") {
   ".github/workflows/guardian.yml",
   "LICENSE",
   "README.md",
+  "contracts/openapi/workbench.public.v1.yaml",
+  "scripts/check-openapi.mjs",
   "src/auth/access-token.guard.ts",
   "src/auth/permissions.guard.ts",
   "src/auth/service-token.service.ts",
+  "src/controllers/legacy-batches.controller.ts",
+  "src/worker/legacy-batch-runtime.service.ts",
+  "Dockerfile",
   "jest.config.js",
   "jest.e2e.config.js",
   "tsconfig.json",
 ].forEach(requireFile);
+
+const dockerfile = read("Dockerfile");
+if (!dockerfile.includes("packages/legacy-connectors/contracts")) {
+  fail("workbench runtime image must include legacy connector contracts");
+}
 
 if (!/SPDX-License-Identifier: AGPL-3\.0-only/.test(read("LICENSE"))) {
   fail("LICENSE must declare AGPL SPDX");

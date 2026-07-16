@@ -7,6 +7,9 @@ import { PaymentOutboxPublisherService } from '../src/worker/payment-outbox-publ
 import { PaymentProcessRuntimeService } from '../src/worker/payment-process-runtime.service';
 import { WorkerService } from '../src/worker/worker.service';
 import { ServiceTokenService } from '../src/auth/service-token.service';
+import { LegacyBatchesController } from '../src/controllers/legacy-batches.controller';
+import { LegacyBatchRuntimeService } from '../src/worker/legacy-batch-runtime.service';
+import { readFileSync } from 'node:fs';
 
 describe('workbench worker runtime', () => {
   let moduleFixture: TestingModule;
@@ -15,17 +18,20 @@ describe('workbench worker runtime', () => {
   let paymentOutboxPublisher: PaymentOutboxPublisherService;
   let paymentRuntime: PaymentProcessRuntimeService;
   let worker: WorkerService;
+  let legacyBatchesController: LegacyBatchesController;
+  let legacyBatchRuntime: LegacyBatchRuntimeService;
 
   beforeAll(async () => {
     process.env.WORKBENCH_QUEUE_BACKEND = 'memory';
     process.env.WORKBENCH_WORKER_ENABLED = 'false';
-    process.env.WORKBENCH_QUEUES = 'payments,platform';
+    process.env.WORKBENCH_QUEUES = 'payments,platform,legacy';
     process.env.LEDGER_CORE_URL = 'http://ledger-core.test';
     process.env.OIDC_ISSUER = 'https://identity.mavula.io';
     process.env.OIDC_AUDIENCE = 'urn:mavula:workbench';
     process.env.OIDC_JWKS_URI = 'https://identity.mavula.io/jwks';
     process.env.LEDGER_CORE_STATUS_ENABLED = 'false';
     process.env.WORKBENCH_PAYMENT_PROCESS_STORE = 'memory';
+    process.env.WORKBENCH_LEGACY_BATCH_STORE = 'memory';
     process.env.FPAY_SETTLEMENT_OUTBOX_ENABLED = 'true';
     process.env.FPAY_OUTBOX_PUBLISHER_ENABLED = 'false';
 
@@ -39,6 +45,8 @@ describe('workbench worker runtime', () => {
     paymentOutboxPublisher = moduleFixture.get(PaymentOutboxPublisherService);
     paymentRuntime = moduleFixture.get(PaymentProcessRuntimeService);
     worker = moduleFixture.get(WorkerService);
+    legacyBatchesController = moduleFixture.get(LegacyBatchesController);
+    legacyBatchRuntime = moduleFixture.get(LegacyBatchRuntimeService);
     jest.spyOn(moduleFixture.get(ServiceTokenService), 'forTenant').mockResolvedValue('test-service-token');
   });
 
@@ -51,6 +59,7 @@ describe('workbench worker runtime', () => {
     delete process.env.LEDGER_CORE_STATUS_ENABLED;
     delete process.env.LEDGER_CORE_PROJECTION_STATUS_ENABLED;
     delete process.env.WORKBENCH_PAYMENT_PROCESS_STORE;
+    delete process.env.WORKBENCH_LEGACY_BATCH_STORE;
     delete process.env.FPAY_SETTLEMENT_OUTBOX_ENABLED;
     delete process.env.FPAY_OUTBOX_PUBLISHER_ENABLED;
   });
@@ -95,6 +104,79 @@ describe('workbench worker runtime', () => {
         accepted: true,
         type: 'PAYMENT_RECONCILIATION',
       },
+    });
+  });
+
+  it('generates a regulatory export through the legacy queue', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ records: [{
+        record_id: 'regtxn_001', transaction_id: 'txn_001', transaction_type: 'LOAN_PAYMENT',
+        instruction_method: 'BATCH', source_party_id: 'customer_001', source_account_id: 'account_001',
+        destination_party_id: 'institution_001', destination_account_id: 'loan_001',
+        counterparty_id: 'institution_001', amount_minor: '120000', currency: 'MZN',
+        occurred_at: '2026-07-15T10:00:00.000Z', recorded_at: '2026-07-15T10:00:01.000Z',
+        correlation_id: 'corr_txn_001', retention_until: '2036-07-15', legal_basis_code: 'MZ-AML-14-2023-ART-43',
+      }], rejections: [] }),
+    } as any);
+    const request = { tenantId: 'tenant_legacy_001', institutionId: 'institution_001', identity: { sub: 'compliance_001' } };
+    const receipt = await legacyBatchesController.requestExport(request, 'idem-export-001', 'corr-export-001', {
+      period_from: '2026-07-01', period_to: '2026-07-31', generated_at: '2026-08-01T08:00:00.000Z',
+      legal_basis_code: 'MZ-AML-14-2023-ART-43', retention_until: '2036-07-31',
+    });
+    const replay = await legacyBatchesController.requestExport(request, 'idem-export-001', 'corr-export-001', {
+      period_from: '2026-07-01', period_to: '2026-07-31', generated_at: '2026-08-01T08:00:00.000Z',
+      legal_basis_code: 'MZ-AML-14-2023-ART-43', retention_until: '2036-07-31',
+    });
+    expect(replay.id).toBe(receipt.id);
+    expect(receipt).not.toHaveProperty('idempotency_key_digest');
+    expect((await statusController.queues()).find((queue: any) => queue.queue === 'legacy')).toMatchObject({ queued: 1, total: 1 });
+
+    expect(await worker.processOnce()).toBe(1);
+    await expect(legacyBatchRuntime.getManager().get(request.tenantId, receipt.id)).resolves.toMatchObject({
+      state: 'GENERATED', record_count: 1,
+    });
+    await expect(legacyBatchRuntime.getManager().getArtifact(request.tenantId, receipt.id)).resolves.toMatchObject({
+      media_type: 'text/plain', byte_length: expect.any(Number),
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://ledger-core.test/api/internal/worker/regulatory-transaction-records',
+      expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ authorization: 'Bearer test-service-token' }) }),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    fetchMock.mockRestore();
+  });
+
+  it('persists ledger source mapping failures as batch rejections', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true, status: 200, json: async () => ({ records: [], rejections: [{
+        transaction_id: 'txn_incomplete', field: 'destination_account_id', code: 'REQUIRED_SOURCE_FIELD_MISSING',
+      }] }),
+    } as any);
+    const request = { tenantId: 'tenant_legacy_rejected', institutionId: 'institution_rejected', identity: { sub: 'compliance_rejected' } };
+    const receipt = await legacyBatchesController.requestExport(request, 'idem-export-rejected', 'corr-export-rejected', {
+      period_from: '2026-07-01', period_to: '2026-07-31', generated_at: '2026-08-01T08:00:00.000Z',
+      legal_basis_code: 'MZ-AML-14-2023-ART-43', retention_until: '2036-07-31',
+    });
+    expect(await worker.processOnce()).toBe(1);
+    await expect(legacyBatchRuntime.getManager().get(request.tenantId, receipt.id)).resolves.toMatchObject({
+      state: 'REJECTED', attempts: 1,
+      rejection_report: [{ field: 'destination_account_id', code: 'REQUIRED_SOURCE_FIELD_MISSING', reference: 'txn_incomplete' }],
+    });
+    fetchMock.mockRestore();
+  });
+
+  it('stages and validates an imported artifact without a ledger callback', async () => {
+    const fixture = readFileSync('../legacy-connectors/contracts/regulatory-transaction-export/v1/examples/regulatory-transaction-export.v1.dat');
+    const request = { tenantId: 'tenant_legacy_002', institutionId: 'institution_002', identity: { sub: 'compliance_002' } };
+    const receipt = await legacyBatchesController.stageImport(
+      request, 'idem-import-001', 'corr-import-001',
+      { originalname: 'incoming.dat', buffer: fixture } as Express.Multer.File,
+    );
+    expect(await worker.processOnce()).toBe(1);
+    await expect(legacyBatchRuntime.getManager().get(request.tenantId, receipt.id)).resolves.toMatchObject({
+      state: 'VALIDATED', record_count: 1,
     });
   });
 
@@ -465,6 +547,9 @@ describe('workbench worker runtime', () => {
       outbox_publishing: expect.any(Number),
       outbox_published: expect.any(Number),
       outbox_failed: expect.any(Number),
+    });
+    expect(metrics.legacy_batches).toMatchObject({
+      generated: expect.any(Number), validated: expect.any(Number), rejected: expect.any(Number), failed: expect.any(Number),
     });
   });
 
