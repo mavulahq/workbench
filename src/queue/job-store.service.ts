@@ -25,7 +25,7 @@ export class JobStoreService implements OnModuleDestroy {
   async enqueue(input: CreateJobInput): Promise<WorkerJob> {
     const now = new Date().toISOString();
     const job: WorkerJob = {
-      id: createJobId(input.type),
+      id: input.job_id || createJobId(input.type),
       queue: input.queue || 'payments',
       type: input.type,
       tenant_id: input.tenant_id || 'public',
@@ -263,6 +263,8 @@ class MemoryJobStore {
   private readonly dead = new Map<string, string[]>();
 
   enqueue(job: WorkerJob): WorkerJob {
+    const existing = this.jobs.get(job.id);
+    if (existing) return existing;
     this.jobs.set(job.id, job);
     this.list(this.pending, job.queue).unshift(job.id);
     return job;
