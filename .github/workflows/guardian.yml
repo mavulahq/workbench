@@ -34,6 +34,7 @@ jobs:
       OIDC_TOKEN_ENDPOINT: https://identity.example.test/token
       WORKBENCH_OIDC_CLIENT_ID: workbench-ci
       WORKBENCH_PRIVATE_JWK_JSON: '{}'
+      LEGACY_CONNECTORS_REF: rfc-0002-executable-batch-runtime
     steps:
       - uses: actions/checkout@v6
       - name: Setup pnpm
@@ -44,7 +45,7 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 22.22.3
-      - name: Prepare settlements workspace
+      - name: Prepare domain package workspace
         run: |
           branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
           if git ls-remote --exit-code --heads https://github.com/mavulahq/settlements "$branch"; then
@@ -52,10 +53,16 @@ jobs:
           else
             git clone --depth 1 https://github.com/mavulahq/settlements ../settlements
           fi
+          if git ls-remote --exit-code --heads https://github.com/mavulahq/legacy-connectors "$LEGACY_CONNECTORS_REF"; then
+            git clone --depth 1 --branch "$LEGACY_CONNECTORS_REF" https://github.com/mavulahq/legacy-connectors ../legacy-connectors
+          else
+            git clone --depth 1 https://github.com/mavulahq/legacy-connectors ../legacy-connectors
+          fi
           cat > pnpm-workspace.yaml <<'YAML'
           packages:
             - .
             - ../settlements
+            - ../legacy-connectors
           YAML
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
@@ -63,6 +70,8 @@ jobs:
         run: pnpm guardian:check
       - name: Build settlements package
         run: pnpm --filter @mavula/settlements build
+      - name: Build legacy connectors package
+        run: pnpm --filter @mavula/legacy-connectors build
       - name: Build
         run: pnpm build
       - name: Test

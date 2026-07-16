@@ -1,0 +1,434 @@
+openapi: 3.1.0
+info:
+  title: MAVULA Workbench API
+  version: 1.0.0
+  description: |
+    Authenticated operational API for tenant-scoped jobs, platform status, and durable legacy interoperability.
+    Workbench orchestrates execution but does not own financial state.
+  license:
+    name: GNU Affero General Public License v3.0 only
+    identifier: AGPL-3.0-only
+servers:
+  - url: https://workbench.mavula.dev
+    description: Workbench public endpoint
+security: [{ bearerAuth: [] }]
+tags:
+  - name: Jobs
+    description: Submit supported payment work and inspect durable execution state.
+  - name: Legacy interoperability
+    description: Generate regulatory exports and validate inbound fixed-width files.
+  - name: Status
+    description: Read authenticated platform, queue, and schedule status.
+paths:
+  /api/jobs:
+    post:
+      operationId: createJob
+      summary: Submit a payment job
+      description: Submit tenant-scoped payment work. The tenant is always derived from the access token.
+      tags: [Jobs]
+      x-mavula-permissions: [workbench.jobs.write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateJob' }
+            examples:
+              payment_capture:
+                value:
+                  queue: payments
+                  type: PAYMENT_CAPTURE
+                  max_attempts: 3
+                  payload:
+                    idempotency_key: payment_capture_20260715_001
+                    correlation_id: checkout_20260715_001
+                    rail: mpesa
+                    amount: { currency: MZN, valueMinor: 125000 }
+                    payer: { accountRef: customer_001, phoneNumber: '+258840000001' }
+                    payee: { accountRef: merchant_001 }
+      responses:
+        '201':
+          description: Job accepted
+          content: { application/json: { schema: { $ref: '#/components/schemas/WorkerJob' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/jobs/{jobId}:
+    get:
+      operationId: getJob
+      summary: Read job status
+      description: Read current status, attempts, result, and final failure details for a tenant-scoped job.
+      tags: [Jobs]
+      x-mavula-permissions: [workbench.read]
+      parameters:
+        - { in: path, name: jobId, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Tenant-scoped job status
+          content: { application/json: { schema: { $ref: '#/components/schemas/WorkerJob' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/regulatory-exports:
+    post:
+      operationId: createRegulatoryExport
+      summary: Request a regulatory export
+      description: Create an idempotent export receipt and queue generation from posted Ledger Core transactions.
+      tags: [Legacy interoperability]
+      x-mavula-permissions: [compliance.manage]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { $ref: '#/components/parameters/CorrelationId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateRegulatoryExport' }
+            example:
+              period_from: '2026-07-01'
+              period_to: '2026-07-31'
+              legal_basis_code: MZ-AML-14-2023-ART-43
+              retention_until: '2036-07-31'
+      responses:
+        '201': { $ref: '#/components/responses/LegacyBatchCreated' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/legacy-imports:
+    post:
+      operationId: createLegacyImport
+      summary: Stage and validate a legacy file
+      description: Store an inbound fixed-width file and queue validation. Imports never post ledger or lending effects.
+      tags: [Legacy interoperability]
+      x-mavula-permissions: [compliance.manage]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { $ref: '#/components/parameters/CorrelationId' }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: US-ASCII file no larger than 10 MiB and 5,000 detail records.
+      responses:
+        '201': { $ref: '#/components/responses/LegacyBatchCreated' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/legacy-batches:
+    get:
+      operationId: listLegacyBatches
+      summary: List legacy batches
+      description: List durable export and import receipts for the authenticated tenant.
+      tags: [Legacy interoperability]
+      x-mavula-permissions: [compliance.manage]
+      responses:
+        '200':
+          description: Tenant-scoped batch receipts
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/LegacyBatchReceipt' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/legacy-batches/{batchId}:
+    get:
+      operationId: getLegacyBatch
+      summary: Read a legacy batch
+      description: Read durable state, attempt count, totals, delivery evidence, and failure reason.
+      tags: [Legacy interoperability]
+      x-mavula-permissions: [compliance.manage]
+      parameters: [{ $ref: '#/components/parameters/BatchId' }]
+      responses:
+        '200': { description: Batch receipt, content: { application/json: { schema: { $ref: '#/components/schemas/LegacyBatchReceipt' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/legacy-batches/{batchId}/artifact:
+    get:
+      operationId: downloadLegacyBatchArtifact
+      summary: Download a generated artifact
+      description: Download the immutable US-ASCII fixed-width file. Verify the HTTP ETag and trailer checksum before delivery.
+      tags: [Legacy interoperability]
+      x-mavula-permissions: [compliance.manage]
+      parameters: [{ $ref: '#/components/parameters/BatchId' }]
+      responses:
+        '200':
+          description: US-ASCII fixed-width artifact
+          headers:
+            ETag: { description: SHA-256 digest of the complete artifact., schema: { type: string } }
+            Content-Disposition: { description: Server-generated safe filename., schema: { type: string } }
+            Content-Length: { schema: { type: integer } }
+          content: { text/plain: { schema: { type: string, format: binary } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/legacy-batches/{batchId}/rejections:
+    get:
+      operationId: getLegacyBatchRejections
+      summary: Read deterministic rejections
+      description: Read stable record, field, code, and reference details for rejected source or import records.
+      tags: [Legacy interoperability]
+      x-mavula-permissions: [compliance.manage]
+      parameters: [{ $ref: '#/components/parameters/BatchId' }]
+      responses:
+        '200':
+          description: Deterministic rejection report
+          content: { application/json: { schema: { $ref: '#/components/schemas/LegacyRejectionReport' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/regulatory-exports/{batchId}/delivery:
+    post:
+      operationId: recordRegulatoryExportDelivery
+      summary: Record authority delivery
+      description: Mark a generated export as delivered and retain the external authority reference as evidence.
+      tags: [Legacy interoperability]
+      x-mavula-permissions: [compliance.manage]
+      parameters:
+        - { $ref: '#/components/parameters/BatchId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { $ref: '#/components/parameters/CorrelationId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecordExportDelivery' }
+            example: { authority_reference: BM-REPORT-2026-07-001, delivered_at: '2026-08-02T09:00:00Z' }
+      responses:
+        '201':
+          description: Export receipt in DELIVERED state
+          content: { application/json: { schema: { $ref: '#/components/schemas/LegacyBatchReceipt' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/status:
+    get:
+      operationId: getPlatformStatus
+      summary: Read platform status
+      tags: [Status]
+      x-mavula-permissions: [workbench.read]
+      responses:
+        '200': { description: Worker and dependency status, content: { application/json: { schema: { $ref: '#/components/schemas/PlatformStatus' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/status/queues:
+    get:
+      operationId: getQueueStatus
+      summary: Read queue status
+      tags: [Status]
+      x-mavula-permissions: [workbench.read]
+      responses:
+        '200': { description: Queue status, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/QueueStats' } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/status/schedules:
+    get:
+      operationId: getScheduleStatus
+      summary: Read registered schedules
+      tags: [Status]
+      x-mavula-permissions: [workbench.read]
+      responses:
+        '200': { description: Registered schedules, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ScheduledJob' } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    BatchId: { in: path, name: batchId, required: true, schema: { type: string, format: uuid } }
+    IdempotencyKey: { in: header, name: Idempotency-Key, required: true, description: Reuse only with an identical request., schema: { type: string, minLength: 1, maxLength: 255 } }
+    CorrelationId: { in: header, name: X-Correlation-ID, required: true, schema: { type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9._:-]+$' } }
+  schemas:
+    MoneyMinor:
+      type: object
+      additionalProperties: false
+      required: [currency, valueMinor]
+      properties:
+        currency: { type: string, const: MZN }
+        valueMinor: { type: integer, minimum: 1, description: Amount in centavos. }
+    PaymentParty:
+      type: object
+      additionalProperties: false
+      required: [accountRef]
+      properties:
+        accountRef: { type: string }
+        displayName: { type: string }
+        phoneNumber: { type: string }
+    PaymentStartPayload:
+      type: object
+      additionalProperties: true
+      required: [idempotency_key, correlation_id, rail, amount, payer, payee]
+      properties:
+        idempotency_key: { type: string }
+        correlation_id: { type: string }
+        rail: { type: string, enum: [mpesa, emola, mkesh, bank_transfer] }
+        amount: { $ref: '#/components/schemas/MoneyMinor' }
+        payer: { $ref: '#/components/schemas/PaymentParty' }
+        payee: { $ref: '#/components/schemas/PaymentParty' }
+        provider_reference: { type: string }
+        metadata: { type: object, additionalProperties: { type: string } }
+    PaymentSettlementPayload:
+      type: object
+      additionalProperties: true
+      required: [provider_reference, provider_event_id, status]
+      properties:
+        provider_reference: { type: string }
+        provider_event_id: { type: string }
+        status: { type: string, enum: [pending, succeeded, failed] }
+        failure_reason: { type: string }
+    PaymentReconciliationPayload:
+      type: object
+      additionalProperties: false
+      properties: { limit: { type: integer, minimum: 1, maximum: 500 } }
+    CreateJob:
+      type: object
+      additionalProperties: false
+      required: [type, payload]
+      properties:
+        type: { type: string, enum: [PAYMENT_CAPTURE, PAYMENT_DISBURSEMENT, PAYMENT_SETTLEMENT, PAYMENT_RECONCILIATION] }
+        queue: { type: string, const: payments, default: payments }
+        payload:
+          oneOf:
+            - $ref: '#/components/schemas/PaymentStartPayload'
+            - $ref: '#/components/schemas/PaymentSettlementPayload'
+            - $ref: '#/components/schemas/PaymentReconciliationPayload'
+        max_attempts: { type: integer, minimum: 1, default: 3 }
+    WorkerJob:
+      type: object
+      required: [id, queue, type, tenant_id, payload, status, attempts, max_attempts, created_at, updated_at]
+      properties:
+        id: { type: string }
+        queue: { type: string }
+        type: { type: string }
+        tenant_id: { type: string }
+        payload: { type: object, additionalProperties: true }
+        status: { type: string, enum: [QUEUED, PROCESSING, COMPLETED, FAILED] }
+        attempts: { type: integer, minimum: 0 }
+        max_attempts: { type: integer, minimum: 1 }
+        result: { type: object, additionalProperties: true }
+        last_error: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        failed_at: { type: string, format: date-time }
+    CreateRegulatoryExport:
+      type: object
+      additionalProperties: false
+      required: [period_from, period_to, legal_basis_code, retention_until]
+      properties:
+        period_from: { type: string, format: date }
+        period_to: { type: string, format: date }
+        generated_at: { type: string, format: date-time }
+        legal_basis_code: { type: string, minLength: 1, maxLength: 64 }
+        retention_until: { type: string, format: date, description: Must preserve at least the required ten-year retention period. }
+    RecordExportDelivery:
+      type: object
+      additionalProperties: false
+      required: [authority_reference]
+      properties:
+        authority_reference: { type: string, minLength: 1, maxLength: 255 }
+        delivered_at: { type: string, format: date-time }
+    LegacyRejection:
+      type: object
+      required: [record, field, code]
+      properties:
+        record: { type: integer, minimum: 1 }
+        field: { type: string }
+        code: { type: string }
+        reference: { type: string }
+    LegacyRejectionReport:
+      type: object
+      required: [batch_id, rejections]
+      properties:
+        batch_id: { type: string, format: uuid }
+        rejections: { type: array, items: { $ref: '#/components/schemas/LegacyRejection' } }
+    LegacyBatchReceipt:
+      type: object
+      required: [id, tenant_id, institution_id, direction, contract_id, state, correlation_id, attempts, max_attempts, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string }
+        institution_id: { type: string }
+        direction: { type: string, enum: [EXPORT, IMPORT] }
+        contract_id: { type: string, const: 'legacy.regulatory_transaction_export@1' }
+        state: { type: string, enum: [QUEUED, PROCESSING, GENERATED, VALIDATED, REJECTED, FAILED, DELIVERED] }
+        correlation_id: { type: string }
+        source_count: { type: integer, minimum: 0 }
+        record_count: { type: integer, minimum: 0 }
+        total_amount_minor: { type: string, pattern: '^[0-9]+$' }
+        content_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        attempts: { type: integer, minimum: 0 }
+        max_attempts: { type: integer, minimum: 1 }
+        rejection_report: { type: array, items: { $ref: '#/components/schemas/LegacyRejection' } }
+        delivered_at: { type: string, format: date-time }
+        authority_reference: { type: string }
+        failure_reason: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    QueueStats:
+      type: object
+      required: [queue, queued, processing, delayed, dead_letter, total, completed, failed]
+      properties:
+        queue: { type: string }
+        queued: { type: integer }
+        processing: { type: integer }
+        delayed: { type: integer }
+        dead_letter: { type: integer }
+        total: { type: integer }
+        completed: { type: integer }
+        failed: { type: integer }
+    ScheduledJob:
+      type: object
+      required: [id, queue, type, every_ms, payload]
+      properties:
+        id: { type: string }
+        queue: { type: string }
+        type: { type: string }
+        every_ms: { type: integer, minimum: 1 }
+        payload: { type: object, additionalProperties: true }
+    PlatformStatus:
+      type: object
+      properties:
+        service: { type: string }
+        status: { type: string, enum: [ok, degraded, down] }
+        timestamp: { type: string, format: date-time }
+        worker: { type: object, additionalProperties: true }
+        dependencies: { type: object, additionalProperties: true }
+    HttpError:
+      type: object
+      required: [statusCode, message]
+      properties:
+        statusCode: { type: integer }
+        message:
+          oneOf:
+            - { type: string }
+            - { type: array, items: { type: string } }
+        error: { type: string }
+  responses:
+    LegacyBatchCreated:
+      description: Durable batch receipt
+      content: { application/json: { schema: { $ref: '#/components/schemas/LegacyBatchReceipt' } } }
+    BadRequest:
+      description: Request contract is invalid
+      content: { application/json: { schema: { $ref: '#/components/schemas/HttpError' } } }
+    Unauthorized:
+      description: Bearer token is missing or invalid
+      content: { application/json: { schema: { $ref: '#/components/schemas/HttpError' } } }
+    Forbidden:
+      description: Required permission or tenant boundary is not satisfied
+      content: { application/json: { schema: { $ref: '#/components/schemas/HttpError' } } }
+    NotFound:
+      description: Tenant-scoped resource was not found
+      content: { application/json: { schema: { $ref: '#/components/schemas/HttpError' } } }
+    Conflict:
+      description: Idempotency key, state, or delivery reference conflicts with existing state
+      content: { application/json: { schema: { $ref: '#/components/schemas/HttpError' } } }
