@@ -53,7 +53,9 @@ jobs:
           else
             git clone --depth 1 https://github.com/mavulahq/settlements ../settlements
           fi
-          if git ls-remote --exit-code --heads https://github.com/mavulahq/legacy-connectors "$LEGACY_CONNECTORS_REF"; then
+          if git ls-remote --exit-code --heads https://github.com/mavulahq/legacy-connectors "$branch"; then
+            git clone --depth 1 --branch "$branch" https://github.com/mavulahq/legacy-connectors ../legacy-connectors
+          elif git ls-remote --exit-code --heads https://github.com/mavulahq/legacy-connectors "$LEGACY_CONNECTORS_REF"; then
             git clone --depth 1 --branch "$LEGACY_CONNECTORS_REF" https://github.com/mavulahq/legacy-connectors ../legacy-connectors
           else
             git clone --depth 1 https://github.com/mavulahq/legacy-connectors ../legacy-connectors

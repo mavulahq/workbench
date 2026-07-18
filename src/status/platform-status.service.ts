@@ -34,14 +34,21 @@ export class PlatformStatusService {
   }
 
   async status() {
-    const [postgres, redis, ledgerCore, queues] = await Promise.all([
-      checkTcpUrl(this.config.databaseUrl, 5432),
+    const [workbenchPostgres, settlementsPostgres, legacyConnectorsPostgres, redis, ledgerCore, queues] = await Promise.all([
+      checkTcpUrl(this.config.workbenchDatabaseUrl, 5432),
+      checkTcpUrl(this.config.settlementsDatabaseUrl, 5432),
+      checkTcpUrl(this.config.legacyConnectorsDatabaseUrl, 5432),
       this.redisStatus(),
       this.ledgerCoreStatus(),
       this.queueStats(),
     ]);
     const worker = this.worker.status();
-    const status = this.overallStatus(postgres, redis, ledgerCore, worker.running || !worker.enabled);
+    const status = this.overallStatus(
+      [workbenchPostgres, settlementsPostgres, legacyConnectorsPostgres],
+      redis,
+      ledgerCore,
+      worker.running || !worker.enabled,
+    );
 
     return {
       status,
@@ -51,7 +58,10 @@ export class PlatformStatusService {
       started_at: this.startedAt.toISOString(),
       uptime_seconds: Math.floor(process.uptime()),
       dependencies: {
-        postgres,
+        postgres: workbenchPostgres,
+        workbench_postgres: workbenchPostgres,
+        settlements_postgres: settlementsPostgres,
+        legacy_connectors_postgres: legacyConnectorsPostgres,
         redis,
         ledger_core: ledgerCore,
         fengine: ledgerCore,
@@ -190,15 +200,15 @@ export class PlatformStatusService {
   }
 
   private overallStatus(
-    postgres: DependencyStatus,
+    postgresDependencies: DependencyStatus[],
     redis: DependencyStatus,
     ledgerCore: DependencyStatus,
     workerReady: boolean,
   ): 'ok' | 'degraded' | 'down' {
-    if (postgres.status === 'down' || redis.status === 'down' || ledgerCore.status === 'down') {
+    if (postgresDependencies.some((dependency) => dependency.status === 'down') || redis.status === 'down' || ledgerCore.status === 'down') {
       return 'down';
     }
-    if (!workerReady || postgres.status === 'degraded' || redis.status === 'degraded' || ledgerCore.status === 'degraded') {
+    if (!workerReady || postgresDependencies.some((dependency) => dependency.status === 'degraded') || redis.status === 'degraded' || ledgerCore.status === 'degraded') {
       return 'degraded';
     }
     return 'ok';

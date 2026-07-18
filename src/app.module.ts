@@ -21,11 +21,15 @@ import { PermissionsGuard } from './auth/permissions.guard';
 import { ServiceTokenService } from './auth/service-token.service';
 import { LegacyBatchesController } from './controllers/legacy-batches.controller';
 import { LegacyBatchRuntimeService } from './worker/legacy-batch-runtime.service';
+import { JobSubmissionService } from './idempotency/job-submission.service';
+import { MetricsTokenGuard } from './auth/metrics-token.guard';
 
 @Module({
   controllers: [StatusController, JobsController, LegacyBatchesController],
   providers: [
     JobStoreService,
+    JobSubmissionService,
+    MetricsTokenGuard,
     PlatformStatusService,
     JobHandlersService,
     PaymentOutboxPublisherService,

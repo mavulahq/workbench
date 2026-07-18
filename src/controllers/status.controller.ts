@@ -4,10 +4,11 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Controller, Get, Header } from '@nestjs/common';
+import { Controller, Get, Header, UseGuards } from '@nestjs/common';
 import { PlatformStatusService } from '../status/platform-status.service';
 import { Public } from '../auth/public.decorator';
 import { RequirePermissions } from '../auth/permissions.decorator';
+import { MetricsTokenGuard } from '../auth/metrics-token.guard';
 
 @Controller()
 export class StatusController {
@@ -45,7 +46,7 @@ export class StatusController {
 
   @Get('metrics')
   @Public()
-  @RequirePermissions('observability.read')
+  @UseGuards(MetricsTokenGuard)
   @Header('Content-Type', 'text/plain; version=0.0.4')
   prometheusMetrics() {
     return this.platformStatus.prometheusMetrics();

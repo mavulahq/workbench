@@ -18,7 +18,15 @@ export const JOB_TYPES = [
   'PLATFORM_HEALTH_CHECK',
 ] as const;
 
+export const PUBLIC_JOB_TYPES = [
+  'PAYMENT_CAPTURE',
+  'PAYMENT_SETTLEMENT',
+  'PAYMENT_DISBURSEMENT',
+  'PAYMENT_RECONCILIATION',
+] as const;
+
 export type JobType = (typeof JOB_TYPES)[number];
+export type PublicJobType = (typeof PUBLIC_JOB_TYPES)[number];
 
 export interface WorkerJob {
   id: string;
