@@ -25,4 +25,10 @@ if (summaries.length !== operationIds.length || permissions.length !== operation
 for (const schema of ['CreateJob', 'WorkerJob', 'LegacyBatchReceipt', 'LegacyRejectionReport', 'PlatformStatus']) {
   if (!source.includes(`    ${schema}:`)) throw new Error(`OpenAPI schema missing: ${schema}`);
 }
+const declaredSchemas = new Set(
+  [...source.matchAll(/^    ([A-Za-z][A-Za-z0-9]+):$/gm)].map((match) => match[1]),
+);
+for (const reference of source.matchAll(/\$ref: '#\/components\/schemas\/([A-Za-z][A-Za-z0-9]+)'/g)) {
+  if (!declaredSchemas.has(reference[1])) throw new Error(`OpenAPI schema reference missing: ${reference[1]}`);
+}
 console.log(`workbench OpenAPI covers ${paths.size} public routes`);

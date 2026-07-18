@@ -433,7 +433,7 @@ components:
         uptime_seconds: { type: integer, minimum: 0 }
         worker: { type: object, additionalProperties: true }
         dependencies: { type: object, additionalProperties: true }
-        schedules: { type: array, items: { $ref: '#/components/schemas/Schedule' } }
+        schedules: { type: array, items: { $ref: '#/components/schemas/ScheduledJob' } }
         queues: { type: array, items: { $ref: '#/components/schemas/QueueStats' } }
     HttpError:
       type: object
