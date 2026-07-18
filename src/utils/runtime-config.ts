@@ -24,12 +24,8 @@ function numberEnv(name: string, legacyName: string, defaultValue: number): numb
 export function getRuntimeConfig() {
   const ledgerCoreUrl = env('LEDGER_CORE_URL', env('FENGINE_URL', 'http://localhost:3000'))!.replace(/\/$/, '');
   const fallbackDatabaseUrl = process.env.DATABASE_URL || 'postgresql://mavula:mavula_dev@localhost:15432/mavula';
-  const databaseBaseUrl = fallbackDatabaseUrl.split('?')[0];
-  const workbenchDatabaseUrl = env('WORKBENCH_DATABASE_URL', `${databaseBaseUrl}?schema=workbench`)!;
-  const settlementsDatabaseUrl = env(
-    'SETTLEMENTS_DATABASE_URL',
-    env('DATABASE_URL', `${databaseBaseUrl}?schema=settlements`),
-  )!;
+  const workbenchDatabaseUrl = env('WORKBENCH_DATABASE_URL', databaseUrlForSchema(fallbackDatabaseUrl, 'workbench'))!;
+  const settlementsDatabaseUrl = env('SETTLEMENTS_DATABASE_URL', databaseUrlForSchema(fallbackDatabaseUrl, 'settlements'))!;
   const queues = env('WORKBENCH_QUEUES', env('FWK_QUEUES', 'payments,platform,legacy'))!
     .split(',')
     .map((queue) => queue.trim())
@@ -43,7 +39,10 @@ export function getRuntimeConfig() {
     databaseUrl: workbenchDatabaseUrl,
     workbenchDatabaseUrl,
     settlementsDatabaseUrl,
-    legacyConnectorsDatabaseUrl: env('LEGACY_CONNECTORS_DATABASE_URL', `${databaseBaseUrl}?schema=legacy_connectors`)!,
+    legacyConnectorsDatabaseUrl: env(
+      'LEGACY_CONNECTORS_DATABASE_URL',
+      databaseUrlForSchema(fallbackDatabaseUrl, 'legacy_connectors'),
+    )!,
     jobReceiptStore: env('WORKBENCH_JOB_RECEIPT_STORE', 'postgres')!,
     jobReceiptRetentionDays: numberEnv('WORKBENCH_JOB_RECEIPT_RETENTION_DAYS', 'FWK_JOB_RECEIPT_RETENTION_DAYS', 365),
     metricsToken: env('WORKBENCH_METRICS_TOKEN', '')!,
@@ -78,4 +77,10 @@ export function getRuntimeConfig() {
     workerBackoffMs: numberEnv('WORKBENCH_WORKER_BACKOFF_MS', 'FWK_WORKER_BACKOFF_MS', 5000),
     queues,
   };
+}
+
+function databaseUrlForSchema(databaseUrl: string, schema: string): string {
+  const url = new URL(databaseUrl);
+  url.searchParams.set('schema', schema);
+  return url.toString();
 }

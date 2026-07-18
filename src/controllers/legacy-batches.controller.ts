@@ -18,7 +18,7 @@ import { LegacyBatchConflictError, LegacyBatchStateError, MAX_LEGACY_ARTIFACT_BY
 import { RequirePermissions } from '../auth/permissions.decorator';
 import { JobStoreService } from '../queue/job-store.service';
 import { LegacyBatchRuntimeService } from '../worker/legacy-batch-runtime.service';
-import { createJobId } from '../utils/ids';
+import { createStableJobId } from '../utils/ids';
 
 @Controller()
 @RequirePermissions('compliance.manage')
@@ -121,7 +121,7 @@ export class LegacyBatchesController {
 
   private async enqueue(batchId: string, tenantId: string, type: 'LEGACY_EXPORT' | 'LEGACY_IMPORT'): Promise<void> {
     await this.jobs.enqueue({
-      job_id: createJobId(type), queue: 'legacy', type, tenant_id: tenantId,
+      job_id: createStableJobId(type, `${tenantId}:${batchId}`), queue: 'legacy', type, tenant_id: tenantId,
       payload: { batch_id: batchId }, max_attempts: 3,
     });
   }

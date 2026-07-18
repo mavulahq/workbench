@@ -103,6 +103,7 @@ describe('workbench worker runtime', () => {
     expect(replay.id).toBe(first.id);
     expect(response.setHeader).toHaveBeenCalledWith('Idempotency-Replayed', 'true');
     expect((await statusController.queues()).find((queue: any) => queue.queue === 'payments')?.total).toBeGreaterThan(0);
+    expect(await worker.processOnce()).toBe(1);
   });
 
   it('rejects reuse of a job submission key with a different request', async () => {
@@ -114,6 +115,7 @@ describe('workbench worker runtime', () => {
     await expect(jobsController.create(request, {
       type: 'PAYMENT_RECONCILIATION', payload: { limit: 20 },
     }, 'job-submit-conflict-001', 'corr-job-conflict-001')).rejects.toMatchObject({ status: 409 });
+    expect(await worker.processOnce()).toBe(1);
   });
 
   it('does not disclose a job to another tenant', async () => {
@@ -124,6 +126,7 @@ describe('workbench worker runtime', () => {
       'corr-job-tenant-read-001',
     );
     await expect(jobsController.get({ tenantId: 'tenant_job_other' }, job.id)).rejects.toMatchObject({ status: 404 });
+    expect(await worker.processOnce()).toBe(1);
   });
 
   it('runs payment reconciliation jobs on the payments queue', async () => {
