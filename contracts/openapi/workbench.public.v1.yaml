@@ -9,7 +9,7 @@ info:
     name: GNU Affero General Public License v3.0 only
     identifier: AGPL-3.0-only
 servers:
-  - url: https://workbench.mavula.dev
+  - url: https://workbench.mavula.io
     description: Workbench public endpoint
 security: [{ bearerAuth: [] }]
 tags:
@@ -27,6 +27,9 @@ paths:
       description: Submit tenant-scoped payment work. The tenant is always derived from the access token.
       tags: [Jobs]
       x-mavula-permissions: [workbench.jobs.write]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { $ref: '#/components/parameters/CorrelationId' }
       requestBody:
         required: true
         content:
@@ -35,9 +38,7 @@ paths:
             examples:
               payment_capture:
                 value:
-                  queue: payments
                   type: PAYMENT_CAPTURE
-                  max_attempts: 3
                   payload:
                     idempotency_key: payment_capture_20260715_001
                     correlation_id: checkout_20260715_001
@@ -52,6 +53,8 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /api/jobs/{jobId}:
     get:
       operationId: getJob
@@ -289,18 +292,40 @@ components:
       additionalProperties: false
       properties: { limit: { type: integer, minimum: 1, maximum: 500 } }
     CreateJob:
+      oneOf:
+        - $ref: '#/components/schemas/CreatePaymentCaptureJob'
+        - $ref: '#/components/schemas/CreatePaymentDisbursementJob'
+        - $ref: '#/components/schemas/CreatePaymentSettlementJob'
+        - $ref: '#/components/schemas/CreatePaymentReconciliationJob'
+      discriminator: { propertyName: type }
+    CreatePaymentCaptureJob:
       type: object
       additionalProperties: false
       required: [type, payload]
       properties:
-        type: { type: string, enum: [PAYMENT_CAPTURE, PAYMENT_DISBURSEMENT, PAYMENT_SETTLEMENT, PAYMENT_RECONCILIATION] }
-        queue: { type: string, const: payments, default: payments }
-        payload:
-          oneOf:
-            - $ref: '#/components/schemas/PaymentStartPayload'
-            - $ref: '#/components/schemas/PaymentSettlementPayload'
-            - $ref: '#/components/schemas/PaymentReconciliationPayload'
-        max_attempts: { type: integer, minimum: 1, default: 3 }
+        type: { type: string, const: PAYMENT_CAPTURE }
+        payload: { $ref: '#/components/schemas/PaymentStartPayload' }
+    CreatePaymentDisbursementJob:
+      type: object
+      additionalProperties: false
+      required: [type, payload]
+      properties:
+        type: { type: string, const: PAYMENT_DISBURSEMENT }
+        payload: { $ref: '#/components/schemas/PaymentStartPayload' }
+    CreatePaymentSettlementJob:
+      type: object
+      additionalProperties: false
+      required: [type, payload]
+      properties:
+        type: { type: string, const: PAYMENT_SETTLEMENT }
+        payload: { $ref: '#/components/schemas/PaymentSettlementPayload' }
+    CreatePaymentReconciliationJob:
+      type: object
+      additionalProperties: false
+      required: [type, payload]
+      properties:
+        type: { type: string, const: PAYMENT_RECONCILIATION }
+        payload: { $ref: '#/components/schemas/PaymentReconciliationPayload' }
     WorkerJob:
       type: object
       required: [id, queue, type, tenant_id, payload, status, attempts, max_attempts, created_at, updated_at]
@@ -397,12 +422,19 @@ components:
         payload: { type: object, additionalProperties: true }
     PlatformStatus:
       type: object
+      additionalProperties: false
+      required: [status, service, version, environment, started_at, uptime_seconds, dependencies, worker, schedules, queues]
       properties:
         service: { type: string }
         status: { type: string, enum: [ok, degraded, down] }
-        timestamp: { type: string, format: date-time }
+        version: { type: string }
+        environment: { type: string }
+        started_at: { type: string, format: date-time }
+        uptime_seconds: { type: integer, minimum: 0 }
         worker: { type: object, additionalProperties: true }
         dependencies: { type: object, additionalProperties: true }
+        schedules: { type: array, items: { $ref: '#/components/schemas/Schedule' } }
+        queues: { type: array, items: { $ref: '#/components/schemas/QueueStats' } }
     HttpError:
       type: object
       required: [statusCode, message]
@@ -431,4 +463,7 @@ components:
       content: { application/json: { schema: { $ref: '#/components/schemas/HttpError' } } }
     Conflict:
       description: Idempotency key, state, or delivery reference conflicts with existing state
+      content: { application/json: { schema: { $ref: '#/components/schemas/HttpError' } } }
+    ServiceUnavailable:
+      description: Durable receipt storage or queue execution is temporarily unavailable
       content: { application/json: { schema: { $ref: '#/components/schemas/HttpError' } } }

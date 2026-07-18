@@ -23,7 +23,13 @@ function numberEnv(name: string, legacyName: string, defaultValue: number): numb
 
 export function getRuntimeConfig() {
   const ledgerCoreUrl = env('LEDGER_CORE_URL', env('FENGINE_URL', 'http://localhost:3000'))!.replace(/\/$/, '');
-  const databaseUrl = process.env.DATABASE_URL || 'postgresql://mavula:mavula_dev@localhost:15432/mavula?schema=public';
+  const fallbackDatabaseUrl = process.env.DATABASE_URL || 'postgresql://mavula:mavula_dev@localhost:15432/mavula';
+  const databaseBaseUrl = fallbackDatabaseUrl.split('?')[0];
+  const workbenchDatabaseUrl = env('WORKBENCH_DATABASE_URL', `${databaseBaseUrl}?schema=workbench`)!;
+  const settlementsDatabaseUrl = env(
+    'SETTLEMENTS_DATABASE_URL',
+    env('DATABASE_URL', `${databaseBaseUrl}?schema=settlements`),
+  )!;
   const queues = env('WORKBENCH_QUEUES', env('FWK_QUEUES', 'payments,platform,legacy'))!
     .split(',')
     .map((queue) => queue.trim())
@@ -34,8 +40,13 @@ export function getRuntimeConfig() {
     version: process.env.npm_package_version || '0.1.0',
     port: Number(process.env.PORT || 3010),
     redisUrl: process.env.REDIS_URL || 'redis://localhost:16379',
-    databaseUrl,
-    legacyConnectorsDatabaseUrl: env('LEGACY_CONNECTORS_DATABASE_URL', databaseUrl)!,
+    databaseUrl: workbenchDatabaseUrl,
+    workbenchDatabaseUrl,
+    settlementsDatabaseUrl,
+    legacyConnectorsDatabaseUrl: env('LEGACY_CONNECTORS_DATABASE_URL', `${databaseBaseUrl}?schema=legacy_connectors`)!,
+    jobReceiptStore: env('WORKBENCH_JOB_RECEIPT_STORE', 'postgres')!,
+    jobReceiptRetentionDays: numberEnv('WORKBENCH_JOB_RECEIPT_RETENTION_DAYS', 'FWK_JOB_RECEIPT_RETENTION_DAYS', 365),
+    metricsToken: env('WORKBENCH_METRICS_TOKEN', '')!,
     legacyBatchStore: env('WORKBENCH_LEGACY_BATCH_STORE', 'postgres')!,
     ledgerCoreUrl,
     fengineUrl: ledgerCoreUrl,

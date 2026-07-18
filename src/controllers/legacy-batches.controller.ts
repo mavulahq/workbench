@@ -18,6 +18,7 @@ import { LegacyBatchConflictError, LegacyBatchStateError, MAX_LEGACY_ARTIFACT_BY
 import { RequirePermissions } from '../auth/permissions.decorator';
 import { JobStoreService } from '../queue/job-store.service';
 import { LegacyBatchRuntimeService } from '../worker/legacy-batch-runtime.service';
+import { createJobId } from '../utils/ids';
 
 @Controller()
 @RequirePermissions('compliance.manage')
@@ -33,6 +34,7 @@ export class LegacyBatchesController {
   ) {
     return this.translate(async () => {
       this.requiredHeaders(idempotencyKey, correlationId);
+      this.requireLegacyQueue();
       const receipt = await this.runtime.getManager().requestExport({
         tenant_id: req.tenantId, institution_id: req.institutionId, idempotency_key: idempotencyKey,
         correlation_id: correlationId, requested_by: req.identity.sub, period_from: body.period_from,
@@ -54,6 +56,7 @@ export class LegacyBatchesController {
   ) {
     return this.translate(async () => {
       this.requiredHeaders(idempotencyKey, correlationId);
+      this.requireLegacyQueue();
       if (!file?.buffer) throw new BadRequestException('A multipart file field is required');
       const receipt = await this.runtime.getManager().stageImport({
         tenant_id: req.tenantId, institution_id: req.institutionId, idempotency_key: idempotencyKey,
@@ -103,18 +106,30 @@ export class LegacyBatchesController {
       if (body.delivered_at && Number.isNaN(new Date(body.delivered_at).valueOf())) {
         throw new BadRequestException('delivered_at must be a valid date-time');
       }
-      return this.runtime.getManager().markDelivered(
-        req.tenantId, batchId, body.authority_reference,
-        body.delivered_at ? new Date(body.delivered_at) : undefined,
-      ).then((receipt) => this.present(receipt));
+      return this.runtime.getManager().markDelivered({
+        tenant_id: req.tenantId,
+        receipt_id: batchId,
+        institution_id: req.institutionId,
+        idempotency_key: idempotencyKey,
+        correlation_id: correlationId,
+        requested_by: req.identity.sub,
+        authority_reference: body.authority_reference,
+        delivered_at: body.delivered_at,
+      }).then((receipt) => this.present(receipt));
     });
   }
 
   private async enqueue(batchId: string, tenantId: string, type: 'LEGACY_EXPORT' | 'LEGACY_IMPORT'): Promise<void> {
     await this.jobs.enqueue({
-      job_id: `legacy-${batchId}`, queue: 'legacy', type, tenant_id: tenantId,
+      job_id: createJobId(type), queue: 'legacy', type, tenant_id: tenantId,
       payload: { batch_id: batchId }, max_attempts: 3,
     });
+  }
+
+  private requireLegacyQueue(): void {
+    if (!this.jobs.isQueueEnabled('legacy')) {
+      throw new ConflictException('The legacy processing queue is not enabled');
+    }
   }
 
   private async requireBatch(tenantId: string, batchId: string) {
@@ -136,6 +151,9 @@ export class LegacyBatchesController {
       request_hash: _requestHash,
       request: _request,
       lease_until: _leaseUntil,
+      lease_token: _leaseToken,
+      delivery_idempotency_key_digest: _deliveryIdempotencyKeyDigest,
+      delivery_request_hash: _deliveryRequestHash,
       ...publicReceipt
     } = receipt;
     return publicReceipt;
@@ -146,7 +164,7 @@ export class LegacyBatchesController {
     catch (error) {
       if (error instanceof BadRequestException) throw error;
       if (error instanceof LegacyBatchConflictError || error instanceof LegacyBatchStateError) throw new ConflictException(error.message);
-      throw new BadRequestException((error as Error).message);
+      throw error;
     }
   }
 }

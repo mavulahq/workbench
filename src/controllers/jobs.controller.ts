@@ -4,29 +4,51 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { BadRequestException, Body, Controller, ForbiddenException, Get, NotFoundException, Param, Post, Req } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Headers, NotFoundException, Param, Post, Req, Res } from '@nestjs/common';
 import { JobStoreService } from '../queue/job-store.service';
-import { CreateJobInput, JOB_TYPES, JobType } from '../types';
+import { CreateJobInput, PUBLIC_JOB_TYPES, PublicJobType } from '../types';
 import { RequirePermissions } from '../auth/permissions.decorator';
 import { CreateJobV1Dto } from '../dto/create-job-v1.dto';
+import { JobSubmissionService } from '../idempotency/job-submission.service';
 
 @Controller('jobs')
 export class JobsController {
-  constructor(private readonly store: JobStoreService) {}
+  constructor(
+    private readonly store: JobStoreService,
+    private readonly submissions: JobSubmissionService,
+  ) {}
 
   @Post()
   @RequirePermissions('workbench.jobs.write')
-  create(@Req() req: any, @Body() body: CreateJobV1Dto) {
-    if (body.tenant_id && body.tenant_id !== req.tenantId) {
-      throw new ForbiddenException('tenant_id does not match the authenticated tenant');
-    }
-    return this.store.enqueue(this.validateCreateJob({ ...body, tenant_id: req.tenantId }));
+  async create(
+    @Req() req: any,
+    @Body() body: CreateJobV1Dto,
+    @Headers('idempotency-key') idempotencyKey: string,
+    @Headers('x-correlation-id') correlationId: string,
+    @Res({ passthrough: true }) response?: any,
+  ) {
+    const input = this.validateCreateJob({
+      type: body.type,
+      payload: body.payload,
+      tenant_id: req.tenantId,
+      queue: 'payments',
+      max_attempts: 3,
+    });
+    const result = await this.submissions.submit({
+      tenantId: req.tenantId,
+      actorId: req.identity?.sub || req.user?.sub || 'unknown',
+      idempotencyKey,
+      correlationId,
+      request: body,
+    }, (jobId) => this.store.enqueue({ ...input, job_id: jobId }));
+    if (result.replayed) response?.setHeader?.('Idempotency-Replayed', 'true');
+    return result.job;
   }
 
   @Get(':jobId')
   @RequirePermissions('workbench.read')
-  async get(@Param('jobId') jobId: string) {
-    const job = await this.store.get(jobId);
+  async get(@Req() req: any, @Param('jobId') jobId: string) {
+    const job = await this.store.getForTenant(jobId, req.tenantId);
     if (!job) {
       throw new NotFoundException(`Job not found: ${jobId}`);
     }
@@ -38,7 +60,7 @@ export class JobsController {
       throw new BadRequestException('Job payload is required');
     }
 
-    if (!JOB_TYPES.includes(body.type as JobType)) {
+    if (!PUBLIC_JOB_TYPES.includes(body.type as PublicJobType)) {
       throw new BadRequestException(`Unsupported job type: ${body.type}`);
     }
 
@@ -53,10 +75,10 @@ export class JobsController {
     return {
       ...body,
       type: body.type,
-      queue: body.queue || 'payments',
+      queue: 'payments',
       tenant_id: body.tenant_id!,
       payload: body.payload || {},
-      max_attempts: body.max_attempts ? Number(body.max_attempts) : 3,
+      max_attempts: 3,
     };
   }
 }

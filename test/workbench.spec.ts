@@ -10,6 +10,7 @@ import { ServiceTokenService } from '../src/auth/service-token.service';
 import { LegacyBatchesController } from '../src/controllers/legacy-batches.controller';
 import { LegacyBatchRuntimeService } from '../src/worker/legacy-batch-runtime.service';
 import { readFileSync } from 'node:fs';
+import { JobStoreService } from '../src/queue/job-store.service';
 
 describe('workbench worker runtime', () => {
   let moduleFixture: TestingModule;
@@ -20,6 +21,7 @@ describe('workbench worker runtime', () => {
   let worker: WorkerService;
   let legacyBatchesController: LegacyBatchesController;
   let legacyBatchRuntime: LegacyBatchRuntimeService;
+  let jobStore: JobStoreService;
 
   beforeAll(async () => {
     process.env.WORKBENCH_QUEUE_BACKEND = 'memory';
@@ -47,6 +49,7 @@ describe('workbench worker runtime', () => {
     worker = moduleFixture.get(WorkerService);
     legacyBatchesController = moduleFixture.get(LegacyBatchesController);
     legacyBatchRuntime = moduleFixture.get(LegacyBatchRuntimeService);
+    jobStore = moduleFixture.get(JobStoreService);
     jest.spyOn(moduleFixture.get(ServiceTokenService), 'forTenant').mockResolvedValue('test-service-token');
   });
 
@@ -70,17 +73,15 @@ describe('workbench worker runtime', () => {
   });
 
   it('enqueues and processes payment jobs', async () => {
-    const job = await jobsController.create({ tenantId: 'test_inst_001' }, {
-      queue: 'payments',
+    const job = await jobsController.create({ tenantId: 'test_inst_001', identity: { sub: 'operator_001' } }, {
       type: 'PAYMENT_CAPTURE',
-      tenant_id: 'test_inst_001',
       payload: paymentPayload('idem_payment_job_001', 'provider_payment_job_001'),
-    });
+    }, 'job-submit-payment-001', 'corr-job-submit-payment-001');
 
     expect(job.status).toBe('QUEUED');
     expect(await worker.processOnce()).toBe(1);
 
-    const processed = await jobsController.get(job.id);
+    const processed = await jobsController.get({ tenantId: 'test_inst_001' }, job.id);
     expect(processed.status).toBe('COMPLETED');
     expect(processed.result).toMatchObject({
       accepted: true,
@@ -89,16 +90,50 @@ describe('workbench worker runtime', () => {
     });
   });
 
+  it('replays an identical public job submission without adding a second job', async () => {
+    const request = { tenantId: 'tenant_job_replay', identity: { sub: 'operator_replay' } };
+    const body = {
+      type: 'PAYMENT_CAPTURE' as const,
+      payload: paymentPayload('idem_payment_replay_001', 'provider_payment_replay_001'),
+    };
+    const response = { setHeader: jest.fn() };
+    const first = await jobsController.create(request, body, 'job-submit-replay-001', 'corr-job-replay-001');
+    const replay = await jobsController.create(request, body, 'job-submit-replay-001', 'corr-job-replay-001', response);
+
+    expect(replay.id).toBe(first.id);
+    expect(response.setHeader).toHaveBeenCalledWith('Idempotency-Replayed', 'true');
+    expect((await statusController.queues()).find((queue: any) => queue.queue === 'payments')?.total).toBeGreaterThan(0);
+  });
+
+  it('rejects reuse of a job submission key with a different request', async () => {
+    const request = { tenantId: 'tenant_job_conflict', identity: { sub: 'operator_conflict' } };
+    await jobsController.create(request, {
+      type: 'PAYMENT_RECONCILIATION', payload: { limit: 10 },
+    }, 'job-submit-conflict-001', 'corr-job-conflict-001');
+
+    await expect(jobsController.create(request, {
+      type: 'PAYMENT_RECONCILIATION', payload: { limit: 20 },
+    }, 'job-submit-conflict-001', 'corr-job-conflict-001')).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('does not disclose a job to another tenant', async () => {
+    const job = await jobsController.create(
+      { tenantId: 'tenant_job_owner', identity: { sub: 'operator_owner' } },
+      { type: 'PAYMENT_RECONCILIATION', payload: { limit: 1 } },
+      'job-submit-tenant-read-001',
+      'corr-job-tenant-read-001',
+    );
+    await expect(jobsController.get({ tenantId: 'tenant_job_other' }, job.id)).rejects.toMatchObject({ status: 404 });
+  });
+
   it('runs payment reconciliation jobs on the payments queue', async () => {
-    const job = await jobsController.create({ tenantId: 'test_inst_001' }, {
-      queue: 'payments',
+    const job = await jobsController.create({ tenantId: 'test_inst_001', identity: { sub: 'operator_001' } }, {
       type: 'PAYMENT_RECONCILIATION',
-      tenant_id: 'test_inst_001',
       payload: { limit: 10 },
-    });
+    }, 'job-submit-reconcile-001', 'corr-job-submit-reconcile-001');
 
     expect(await worker.processOnce()).toBe(1);
-    await expect(jobsController.get(job.id)).resolves.toMatchObject({
+    await expect(jobsController.get({ tenantId: 'test_inst_001' }, job.id)).resolves.toMatchObject({
       status: 'COMPLETED',
       result: {
         accepted: true,
@@ -181,12 +216,12 @@ describe('workbench worker runtime', () => {
   });
 
   it('rejects unsupported job types', async () => {
-    expect(() =>
-      jobsController.create({ tenantId: 'test_inst_001' }, {
+    await expect(
+      jobsController.create({ tenantId: 'test_inst_001', identity: { sub: 'operator_001' } }, {
         type: 'UNSUPPORTED_JOB' as any,
         payload: {},
-      }),
-    ).toThrow('Unsupported job type');
+      }, 'job-submit-invalid-001', 'corr-job-submit-invalid-001'),
+    ).rejects.toThrow('Unsupported job type');
   });
 
   it('dispatches ledger-core events through the authenticated callback', async () => {
@@ -195,7 +230,7 @@ describe('workbench worker runtime', () => {
       status: 200,
       json: async () => ({ accepted: true, executed_workflows: 1 }),
     } as any);
-    const job = await jobsController.create({ tenantId: 'test_inst_001' }, {
+    const job = await jobStore.enqueue({
       queue: 'platform',
       type: 'LEDGER_CORE_EVENT',
       tenant_id: 'test_inst_001',
@@ -203,7 +238,7 @@ describe('workbench worker runtime', () => {
     });
 
     expect(await worker.processOnce()).toBe(1);
-    await expect(jobsController.get(job.id)).resolves.toMatchObject({
+    await expect(jobsController.get({ tenantId: 'test_inst_001' }, job.id)).resolves.toMatchObject({
       status: 'COMPLETED',
       result: { accepted: true, executed_workflows: 1 },
     });
@@ -250,7 +285,7 @@ describe('workbench worker runtime', () => {
       },
     };
 
-    const job = await jobsController.create({ tenantId: 'test_inst_001' }, {
+    const job = await jobStore.enqueue({
       queue: 'platform',
       type: 'LEDGER_CORE_EVENT',
       tenant_id: 'test_inst_001',
@@ -258,7 +293,7 @@ describe('workbench worker runtime', () => {
     });
 
     expect(await worker.processOnce()).toBe(1);
-    await expect(jobsController.get(job.id)).resolves.toMatchObject({
+    await expect(jobsController.get({ tenantId: 'test_inst_001' }, job.id)).resolves.toMatchObject({
       status: 'COMPLETED',
       result: { accepted: true, event_id: event.event_id },
     });
@@ -308,7 +343,7 @@ describe('workbench worker runtime', () => {
       },
     };
 
-    const job = await jobsController.create({ tenantId: 'test_inst_001' }, {
+    const job = await jobStore.enqueue({
       queue: 'platform',
       type: 'LEDGER_CORE_EVENT',
       tenant_id: 'test_inst_001',
@@ -316,7 +351,7 @@ describe('workbench worker runtime', () => {
     });
 
     expect(await worker.processOnce()).toBe(1);
-    await expect(jobsController.get(job.id)).resolves.toMatchObject({
+    await expect(jobsController.get({ tenantId: 'test_inst_001' }, job.id)).resolves.toMatchObject({
       status: 'COMPLETED',
       result: { accepted: true, event_id: event.event_id },
     });
@@ -340,7 +375,7 @@ describe('workbench worker runtime', () => {
       json: async () => ({ accepted: true, event_id: 'evt_partial' }),
     } as any);
 
-    const job = await jobsController.create({ tenantId: 'test_inst_001' }, {
+    const job = await jobStore.enqueue({
       queue: 'platform',
       type: 'LEDGER_CORE_EVENT',
       tenant_id: 'test_inst_001',
@@ -356,7 +391,7 @@ describe('workbench worker runtime', () => {
     });
 
     expect(await worker.processOnce()).toBe(1);
-    await expect(jobsController.get(job.id)).resolves.toMatchObject({
+    await expect(jobsController.get({ tenantId: 'test_inst_001' }, job.id)).resolves.toMatchObject({
       status: 'COMPLETED',
       result: { accepted: true, event_id: 'evt_partial' },
     });
@@ -407,7 +442,7 @@ describe('workbench worker runtime', () => {
       },
     };
 
-    const job = await jobsController.create({ tenantId: 'test_inst_001' }, {
+    const job = await jobStore.enqueue({
       queue: 'platform',
       type: 'LEDGER_CORE_EVENT',
       tenant_id: 'test_inst_001',
@@ -415,7 +450,7 @@ describe('workbench worker runtime', () => {
     });
 
     expect(await worker.processOnce()).toBe(1);
-    await expect(jobsController.get(job.id)).resolves.toMatchObject({
+    await expect(jobsController.get({ tenantId: 'test_inst_001' }, job.id)).resolves.toMatchObject({
       status: 'COMPLETED',
       result: { accepted: true, event_id: event.event_id },
     });
@@ -434,7 +469,7 @@ describe('workbench worker runtime', () => {
     const serviceTokens = moduleFixture.get(ServiceTokenService);
     const tokenMock = jest.spyOn(serviceTokens, 'forTenant');
     tokenMock.mockClear();
-    const job = await jobsController.create({ tenantId: 'test_inst_001' }, {
+    const job = await jobStore.enqueue({
       queue: 'platform',
       type: 'LEDGER_CORE_EVENT',
       tenant_id: 'test_inst_001',
@@ -454,7 +489,7 @@ describe('workbench worker runtime', () => {
     });
 
     expect(await worker.processOnce()).toBe(1);
-    await expect(jobsController.get(job.id)).resolves.toMatchObject({
+    await expect(jobsController.get({ tenantId: 'test_inst_001' }, job.id)).resolves.toMatchObject({
       status: 'FAILED',
       last_error: 'domain event tenant does not match the worker job tenant',
     });

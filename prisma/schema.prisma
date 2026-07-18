@@ -1,0 +1,28 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model JobSubmissionReceipt {
+  id            String    @id
+  tenantId      String
+  operation     String
+  keyDigest     String
+  requestHash   String
+  jobId         String
+  correlationId String
+  actorId       String
+  state         String
+  httpStatus    Int?
+  responseBody  Json?
+  completedAt   DateTime?
+  expiresAt     DateTime
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @default(now()) @updatedAt
+
+  @@unique([tenantId, operation, keyDigest])
+  @@unique([tenantId, jobId])
+  @@index([expiresAt])
+  @@index([tenantId, createdAt])
+  @@map("job_submission_receipts")
+}

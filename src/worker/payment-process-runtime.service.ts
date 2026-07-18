@@ -42,7 +42,7 @@ export class PaymentProcessRuntimeService implements OnModuleDestroy {
     if (this.useMemoryStore()) {
       return new MemoryPaymentProcessStore();
     }
-    return new PostgresPaymentProcessStore(this.config.databaseUrl);
+    return new PostgresPaymentProcessStore(this.config.settlementsDatabaseUrl);
   }
 
   private useMemoryStore(): boolean {

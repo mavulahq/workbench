@@ -52,8 +52,8 @@ export class JobStoreService implements OnModuleDestroy {
       removeOnComplete: false,
       removeOnFail: false,
     };
-    await queue.add(job.type, job, options);
-    return job;
+    const queued = await queue.add(job.type, job, options);
+    return this.fromBullJob(job.queue, queued);
   }
 
   async schedule(input: CreateJobInput & { schedule_id: string; every_ms: number }): Promise<void> {
@@ -176,6 +176,15 @@ export class JobStoreService implements OnModuleDestroy {
       }
     }
     return null;
+  }
+
+  async getForTenant(jobId: string, tenantId: string): Promise<WorkerJob | null> {
+    const job = await this.get(jobId);
+    return job?.tenant_id === tenantId ? job : null;
+  }
+
+  isQueueEnabled(queueName: string): boolean {
+    return this.config.queues.includes(queueName);
   }
 
   async stats(queueName: string): Promise<QueueStats> {
