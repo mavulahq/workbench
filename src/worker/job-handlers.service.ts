@@ -105,11 +105,10 @@ export class JobHandlersService {
   }
 
   private async reconcilePayments(job: WorkerJob) {
-    const tenantId = job.tenant_id === 'system' ? undefined : job.tenant_id;
-    const result = await this.payments.getManager().reconcile({
-      tenantId,
-      limit: Number(job.payload.limit || this.config.paymentReconciliationLimit),
-    });
+    const limit = Number(job.payload.limit || this.config.paymentReconciliationLimit);
+    const result = job.tenant_id === 'system'
+      ? await this.payments.getManager().reconcile({ allTenants: true, limit })
+      : await this.payments.getManager().reconcile({ tenantId: job.tenant_id, limit });
     return {
       accepted: true,
       ...result,
@@ -234,22 +233,38 @@ export class JobHandlersService {
       throw new Error('domain event tenant does not match the worker job tenant');
     }
     const scopedEvent = { ...event, tenant_id: eventTenantId };
-    const response = await fetch(`${this.config.fengineUrl}/api/internal/worker/domain-events`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${await this.serviceTokens.forTenant(job.tenant_id)}`,
-      },
-      body: JSON.stringify({
-        job_id: job.id,
-        event: scopedEvent,
-      }),
-      signal: AbortSignal.timeout(this.config.internalRequestTimeoutMs),
-    });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(`ledger-core domain event callback failed (${response.status}): ${JSON.stringify(body)}`);
+    const outboxEventId = typeof job.payload.outbox_event_id === 'string' ? job.payload.outbox_event_id : undefined;
+    const outboxLockedBy = typeof job.payload.outbox_locked_by === 'string' ? job.payload.outbox_locked_by : undefined;
+    try {
+      const response = await fetch(`${this.config.fengineUrl}/api/internal/worker/domain-events`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${await this.serviceTokens.forTenant(job.tenant_id)}`,
+        },
+        body: JSON.stringify({
+          job_id: job.id,
+          event: scopedEvent,
+        }),
+        signal: AbortSignal.timeout(this.config.internalRequestTimeoutMs),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(`ledger-core domain event callback failed (${response.status}): ${JSON.stringify(body)}`);
+      }
+      if (outboxEventId && outboxLockedBy) {
+        await this.payments.getManager().markOutboxEventPublishedById(outboxEventId, outboxLockedBy);
+      }
+      return body;
+    } catch (error) {
+      if (outboxEventId && outboxLockedBy) {
+        await this.payments.getManager().markOutboxEventFailedById(
+          outboxEventId,
+          outboxLockedBy,
+          error instanceof Error ? error : new Error(String(error)),
+        );
+      }
+      throw error;
     }
-    return body;
   }
 }

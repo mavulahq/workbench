@@ -548,7 +548,8 @@ describe('workbench worker runtime', () => {
     });
     await expect(paymentRuntime.metrics()).resolves.toMatchObject({
       outboxPending: 0,
-      outboxPublished: expect.any(Number),
+      outboxPublishing: 1,
+      outboxPublished: 0,
     });
 
     expect(await worker.processOnce()).toBe(1);
@@ -562,6 +563,10 @@ describe('workbench worker runtime', () => {
         }),
       }),
     );
+    await expect(paymentRuntime.metrics()).resolves.toMatchObject({
+      outboxPublishing: 0,
+      outboxPublished: 1,
+    });
     fetchMock.mockRestore();
   });
 
@@ -586,9 +591,7 @@ describe('workbench worker runtime', () => {
       outbox_published: expect.any(Number),
       outbox_failed: expect.any(Number),
     });
-    expect(metrics.legacy_batches).toMatchObject({
-      generated: expect.any(Number), validated: expect.any(Number), rejected: expect.any(Number), failed: expect.any(Number),
-    });
+    expect(metrics).not.toHaveProperty('legacy_batches');
   });
 
   it('keeps worker health metrics when payment metrics fail', async () => {

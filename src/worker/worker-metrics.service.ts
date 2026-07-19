@@ -9,7 +9,6 @@ import { JobStoreService } from '../queue/job-store.service';
 import { WorkerHealthMetrics } from '../types';
 import { PaymentProcessRuntimeService } from './payment-process-runtime.service';
 import { WorkerService } from './worker.service';
-import { LegacyBatchRuntimeService } from './legacy-batch-runtime.service';
 
 @Injectable()
 export class WorkerMetricsService {
@@ -17,14 +16,12 @@ export class WorkerMetricsService {
     private readonly store: JobStoreService,
     private readonly worker: WorkerService,
     private readonly paymentProcesses: PaymentProcessRuntimeService,
-    private readonly legacyBatches: LegacyBatchRuntimeService,
   ) {}
 
   async snapshot(): Promise<WorkerHealthMetrics> {
     const worker = this.worker.status();
     const queues = await Promise.all(worker.queues.map((queue) => this.store.stats(queue)));
     const paymentProcesses = await this.paymentProcesses.metrics().catch(() => undefined);
-    const legacyBatches = await this.legacyBatches.metrics().catch(() => undefined);
     const metrics: WorkerHealthMetrics = {
       worker_enabled: worker.enabled,
       worker_running: worker.running,
@@ -47,7 +44,7 @@ export class WorkerMetricsService {
         outbox_failed: paymentProcesses.outboxFailed,
       };
     }
-    if (legacyBatches) metrics.legacy_batches = legacyBatches;
+    // Legacy batch metrics require a tenantId; omit cross-tenant globalMetrics from platform health.
 
     return metrics;
   }
@@ -97,19 +94,6 @@ export class WorkerMetricsService {
           `# TYPE ${prefix}_payment_outbox_failed gauge`,
           `${prefix}_payment_outbox_failed ${metrics.payment_processes.outbox_failed}`,
         );
-      }
-    }
-
-    if (metrics.legacy_batches) {
-      for (const prefix of ['workbench', 'fwk']) {
-        for (const state of ['queued', 'processing', 'generated', 'validated', 'rejected', 'failed', 'delivered'] as const) {
-          lines.push(`# HELP ${prefix}_legacy_batch_${state} Legacy batches in ${state} state.`);
-          lines.push(`# TYPE ${prefix}_legacy_batch_${state} gauge`);
-          lines.push(`${prefix}_legacy_batch_${state} ${metrics.legacy_batches[state]}`);
-        }
-        lines.push(`# HELP ${prefix}_legacy_batch_rejection_records Rejected legacy records.`);
-        lines.push(`# TYPE ${prefix}_legacy_batch_rejection_records gauge`);
-        lines.push(`${prefix}_legacy_batch_rejection_records ${metrics.legacy_batches.rejection_records}`);
       }
     }
 

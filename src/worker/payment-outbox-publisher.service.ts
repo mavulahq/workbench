@@ -75,8 +75,9 @@ export class PaymentOutboxPublisherService implements OnModuleInit, OnModuleDest
 
       for (const event of events) {
         try {
+          this.assertPayloadTenant(event);
           await this.enqueueLedgerCoreEvent(event);
-          await manager.markOutboxEventPublished(event);
+          // Leave the event in PUBLISHING under lease until the worker confirms delivery.
           result.published += 1;
         } catch (error) {
           const publishError = this.asError(error);
@@ -96,6 +97,16 @@ export class PaymentOutboxPublisherService implements OnModuleInit, OnModuleDest
     }
   }
 
+  private assertPayloadTenant(event: PaymentOutboxEvent): void {
+    const payload = event.payload as { tenant_id?: unknown };
+    if (typeof payload?.tenant_id !== 'string' || !payload.tenant_id.trim()) {
+      return;
+    }
+    if (payload.tenant_id !== event.tenantId) {
+      throw new Error('outbox event payload tenant_id does not match event.tenantId');
+    }
+  }
+
   private async enqueueLedgerCoreEvent(event: PaymentOutboxEvent): Promise<void> {
     await this.jobs.enqueue({
       queue: 'platform',
@@ -107,6 +118,7 @@ export class PaymentOutboxPublisherService implements OnModuleInit, OnModuleDest
         event_type: event.eventType,
         event: event.payload,
         outbox_event_id: event.id,
+        outbox_locked_by: event.lockedBy,
       },
     });
   }

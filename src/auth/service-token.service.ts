@@ -48,7 +48,7 @@ export class ServiceTokenService {
       client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
       client_assertion: assertion,
       resource: this.config.ledgerCoreAudience,
-      scope: 'internal.worker',
+      scope: 'internal.worker regulatory.export',
       tenant_id: tenantId,
     });
     const response = await fetch(tokenEndpoint, {

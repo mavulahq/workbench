@@ -26,7 +26,12 @@ export class LegacyBatchRuntimeService implements OnModuleDestroy {
     return this.manager;
   }
 
-  metrics(): Promise<LegacyBatchMetrics> { return this.getManager().globalMetrics(); }
+  metrics(tenantId: string): Promise<LegacyBatchMetrics> {
+    if (!tenantId.trim()) {
+      throw new Error('tenantId is required for legacy batch metrics');
+    }
+    return this.getManager().metrics(tenantId);
+  }
 
   private useMemoryStore(): boolean {
     return this.config.legacyBatchStore === 'memory' || process.env.NODE_ENV === 'test';

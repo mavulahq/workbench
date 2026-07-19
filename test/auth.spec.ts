@@ -29,6 +29,7 @@ describe('ServiceTokenService', () => {
     expect(body.get('grant_type')).toBe('client_credentials');
     expect(body.get('tenant_id')).toBe('tenant-1');
     expect(body.get('resource')).toBe('urn:mavula:ledger-core');
+    expect(body.get('scope')).toBe('internal.worker regulatory.export');
     expect(body.get('client_assertion')).toBeTruthy();
     fetchMock.mockRestore();
   });
